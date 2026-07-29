@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AI Listener T-01 fixed corpus manifest",
+  "type": "object",
+  "required": ["license", "utterances"],
+  "properties": {
+    "license": {
+      "type": "object",
+      "required": [
+        "redistributionAllowed", "evidenceURL", "evidenceFile", "evidenceSHA256"
+      ],
+      "properties": {
+        "redistributionAllowed": { "const": true },
+        "evidenceURL": { "type": "string", "minLength": 1 },
+        "evidenceFile": { "type": "string", "minLength": 1 },
+        "evidenceSHA256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "utterances": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id", "group", "speakerId", "gender", "durationMs",
+          "audio", "sha256", "reference"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "group": { "enum": ["clean", "noise"] },
+          "speakerId": { "type": "string" },
+          "gender": { "enum": ["female", "male"] },
+          "durationMs": { "type": "integer", "minimum": 1 },
+          "audio": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "reference": { "type": "string", "minLength": 1 },
+          "snrDb": { "type": "number", "minimum": 10, "maximum": 20 }
+        }
+      }
+    }
+  }
+}

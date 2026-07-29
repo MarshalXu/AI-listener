@@ -156,19 +156,175 @@ public final class SessionStore {
         try validate(session)
         try validate(asset)
         try transaction {
-            var pending = session
-            pending = SessionRecord(
+            let pending = SessionRecord(
                 sessionId: session.sessionId, state: "finalizing",
                 transcriptState: session.transcriptState, createdAtUtc: session.createdAtUtc,
                 captureStartMonotonicNs: session.captureStartMonotonicNs,
                 lastEventSequence: session.lastEventSequence, endedAtUtc: session.endedAtUtc,
                 terminationReason: session.terminationReason
             )
-            try insertSessionStatement(pending)
-            try insertAssetStatement(asset)
+            if try scalarInt(
+                "SELECT COUNT(*) FROM sessions WHERE session_id = ?", [.text(session.sessionId)]
+            ) == 0 {
+                try insertSessionStatement(pending)
+            } else {
+                try execute(
+                    """
+                    UPDATE sessions SET state = 'finalizing', transcript_state = ?,
+                      ended_at_utc = ?, termination_reason = ?
+                    WHERE session_id = ?
+                    """,
+                    [
+                        .text(session.transcriptState), .optionalInteger(session.endedAtUtc),
+                        .optionalText(session.terminationReason), .text(session.sessionId),
+                    ]
+                )
+            }
+            if try scalarInt(
+                "SELECT COUNT(*) FROM audio_assets WHERE audio_asset_id = ?",
+                [.text(asset.audioAssetId)]
+            ) == 0 {
+                try insertAssetStatement(asset)
+            } else {
+                let matches = try scalarInt(
+                    """
+                    SELECT COUNT(*) FROM audio_assets
+                    WHERE audio_asset_id = ? AND session_id = ? AND relative_path = ?
+                      AND byte_count = ? AND sha256 = ? AND commit_state = 'committed'
+                    """,
+                    [
+                        .text(asset.audioAssetId), .text(asset.sessionId),
+                        .text(asset.relativePath), .integer(asset.byteCount), .text(asset.sha256),
+                    ]
+                )
+                guard matches == 1 else {
+                    throw SessionStoreError.invalidContract("audioAssetConflict")
+                }
+            }
             try execute(
                 "UPDATE sessions SET state = ?, committed_audio_asset_id = ? WHERE session_id = ?",
                 [.text(session.state), .text(asset.audioAssetId), .text(session.sessionId)]
+            )
+        }
+    }
+
+    public func committedAssetMatches(
+        sessionId: String, audioAssetId: String, relativePath: String,
+        byteCount: Int64, sha256: String
+    ) throws -> Bool {
+        try scalarInt(
+            """
+            SELECT COUNT(*) FROM sessions s JOIN audio_assets a
+              ON a.audio_asset_id = s.committed_audio_asset_id
+            WHERE s.session_id = ? AND a.audio_asset_id = ? AND a.relative_path = ?
+              AND a.byte_count = ? AND a.sha256 = ? AND a.commit_state = 'committed'
+              AND s.state IN ('ready','recovered')
+            """,
+            [
+                .text(sessionId), .text(audioAssetId), .text(relativePath),
+                .integer(byteCount), .text(sha256),
+            ]
+        ) == 1
+    }
+
+    public func markRecoveryRequired(_ session: SessionRecord) throws {
+        let recovery = SessionRecord(
+            sessionId: session.sessionId, state: "recoveryRequired",
+            transcriptState: session.transcriptState, createdAtUtc: session.createdAtUtc,
+            captureStartMonotonicNs: session.captureStartMonotonicNs,
+            lastEventSequence: session.lastEventSequence, endedAtUtc: session.endedAtUtc,
+            terminationReason: session.terminationReason, lastErrorId: session.lastErrorId
+        )
+        try validate(recovery)
+        try transaction {
+            if try scalarInt(
+                "SELECT COUNT(*) FROM sessions WHERE session_id = ?", [.text(session.sessionId)]
+            ) == 0 {
+                try insertSessionStatement(recovery)
+            } else {
+                try execute(
+                    """
+                    UPDATE sessions SET state = 'recoveryRequired',
+                      committed_audio_asset_id = NULL WHERE session_id = ?
+                    """,
+                    [.text(session.sessionId)]
+                )
+            }
+        }
+    }
+
+    public func markFailed(_ session: SessionRecord) throws {
+        try transaction {
+            try execute(
+                """
+                UPDATE sessions SET state = 'failed', committed_audio_asset_id = NULL,
+                  termination_reason = ? WHERE session_id = ?
+                """,
+                [.optionalText(session.terminationReason), .text(session.sessionId)]
+            )
+        }
+    }
+
+    public func sessionState(sessionId: String) throws -> String? {
+        try scalarText("SELECT state FROM sessions WHERE session_id = ?", [.text(sessionId)])
+    }
+
+    public func sessionIds(inStates states: [String]) throws -> [String] {
+        guard !states.isEmpty, states.allSatisfy({
+            ["recording", "interrupted", "finalizing", "ready", "recovered",
+             "recoveryRequired", "deleting", "failed"].contains($0)
+        }) else {
+            throw SessionStoreError.invalidContract("state")
+        }
+        let placeholders = Array(repeating: "?", count: states.count).joined(separator: ",")
+        return try textRows(
+            "SELECT session_id FROM sessions WHERE state IN (\(placeholders)) ORDER BY session_id",
+            states.map(Binding.text)
+        )
+    }
+
+    public func referencedAudioPaths() throws -> Set<String> {
+        Set(try textRows("SELECT relative_path FROM audio_assets"))
+    }
+
+    public func audioPathForDeletion(sessionId: String) throws -> String? {
+        try scalarText(
+            """
+            SELECT a.relative_path FROM sessions s JOIN audio_assets a
+              ON a.audio_asset_id = s.committed_audio_asset_id
+            WHERE s.session_id = ?
+            """,
+            [.text(sessionId)]
+        )
+    }
+
+    public func beginDeleting(sessionId: String) throws {
+        try transaction {
+            let count = try scalarInt(
+                "SELECT COUNT(*) FROM sessions WHERE session_id = ?", [.text(sessionId)]
+            )
+            guard count == 1 else { throw SessionStoreError.invalidContract("sessionId") }
+            try execute(
+                "UPDATE sessions SET state = 'deleting' WHERE session_id = ?",
+                [.text(sessionId)]
+            )
+            try execute(
+                """
+                UPDATE audio_assets SET commit_state = 'deleting'
+                WHERE audio_asset_id = (
+                  SELECT committed_audio_asset_id FROM sessions WHERE session_id = ?
+                )
+                """,
+                [.text(sessionId)]
+            )
+        }
+    }
+
+    public func finishDeleting(sessionId: String) throws {
+        try transaction {
+            try execute(
+                "DELETE FROM sessions WHERE session_id = ? AND state = 'deleting'",
+                [.text(sessionId)]
             )
         }
     }
@@ -484,6 +640,56 @@ public final class SessionStore {
         }
         guard sqlite3_step(statement) == SQLITE_ROW else { return -1 }
         return Int(sqlite3_column_int64(statement, 0))
+    }
+
+    private func scalarText(_ sql: String, _ bindings: [Binding] = []) throws -> String? {
+        var statement: OpaquePointer?
+        try prepare(sql, into: &statement)
+        defer { sqlite3_finalize(statement) }
+        for (offset, binding) in bindings.enumerated() {
+            let index = Int32(offset + 1)
+            let result: Int32
+            switch binding {
+            case .integer(let value): result = sqlite3_bind_int64(statement, index, value)
+            case .text(let value):
+                result = sqlite3_bind_text(
+                    statement, index, value, -1,
+                    unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+                )
+            case .null: result = sqlite3_bind_null(statement, index)
+            }
+            guard result == SQLITE_OK else { throw currentError() }
+        }
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let bytes = sqlite3_column_text(statement, 0) else { return nil }
+        return String(cString: bytes)
+    }
+
+    private func textRows(_ sql: String, _ bindings: [Binding] = []) throws -> [String] {
+        var statement: OpaquePointer?
+        try prepare(sql, into: &statement)
+        defer { sqlite3_finalize(statement) }
+        for (offset, binding) in bindings.enumerated() {
+            let index = Int32(offset + 1)
+            let result: Int32
+            switch binding {
+            case .integer(let value): result = sqlite3_bind_int64(statement, index, value)
+            case .text(let value):
+                result = sqlite3_bind_text(
+                    statement, index, value, -1,
+                    unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+                )
+            case .null: result = sqlite3_bind_null(statement, index)
+            }
+            guard result == SQLITE_OK else { throw currentError() }
+        }
+        var rows: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let bytes = sqlite3_column_text(statement, 0) {
+                rows.append(String(cString: bytes))
+            }
+        }
+        return rows
     }
 
     private func prepare(_ sql: String, into statement: inout OpaquePointer?) throws {

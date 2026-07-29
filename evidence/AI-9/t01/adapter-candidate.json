@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "specification": {
+    "name": "AI-3 SDD-r3",
+    "aggregateSha256": "7711eca19ef7c255a729adad4c48f97ac3b94639356f1a5a9d07723c49e5863e"
+  },
+  "decision": {
+    "status": "candidate-not-locked",
+    "reason": "T-01 quality corpus, partial/final latency, and three-reviewer intelligibility gates remain incomplete",
+    "t05Allowed": false
+  },
+  "adapter": {
+    "name": "sherpa-onnx",
+    "version": "1.13.2",
+    "sourceCommit": "13d0ae6c539d2809d32f5eaa3ef1db0c459d0b24",
+    "provider": "cpu",
+    "threads": 2,
+    "decodingMethod": "greedy_search",
+    "license": "Apache-2.0",
+    "archiveSha256": "d880aaa79d36b784168a0398b278813d57ba8e135f468894b8f134b664e2e225"
+  },
+  "model": {
+    "name": "sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23",
+    "license": "Apache-2.0",
+    "archiveSha256": "2cbd71b640d9c37d3784f29367333a4577b0398b62e9deeed418170b081cba8b",
+    "tokensSha256": "8b294db9045d6e5f94647f4c1eec1af4da143a75053c399611444b378ff966ac",
+    "encoderSha256": "1c556ea57cec304e55ec4b72e52c1cc098bb01476ed7d90f3de939fe126487b1",
+    "decoderSha256": "5ee0f03a2768ff1d5c83ef3a493243c7935d316cd41280037b14783a3467cc78",
+    "joinerSha256": "a7cf9d82757bdcf786059454495a9ca95e4bd7347f72473fc08d794475c36169"
+  }
+}

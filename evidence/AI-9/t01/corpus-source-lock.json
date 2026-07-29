@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "status": "license-evidence-locked-not-assembled",
+  "source": {
+    "corpusId": "AISHELL-ASR0009-OS1",
+    "name": "AISHELL-1",
+    "publisher": "Beijing Shell Shell Technology Co., Ltd.",
+    "language": "Mandarin Chinese",
+    "license": "Apache-2.0",
+    "officialLicenseEvidenceURL": "https://www.aishelltech.com/kysjcp",
+    "licenseEvidence": {
+      "retrievedAtUTC": "2026-07-29T11:39:52Z",
+      "declarationURL": "https://www.openslr.org/resources/33/info.txt",
+      "declarationFile": "licenses/AISHELL-1-OpenSLR-info.txt",
+      "declarationSHA256": "f9e49e4ca0d67be4f0dcc21baee5e6c26dad15b9be1b9fd7f487729edbe532a9",
+      "descriptionURL": "https://www.openslr.org/resources/33/about.html",
+      "descriptionFile": "licenses/AISHELL-1-OpenSLR-about.html",
+      "descriptionSHA256": "e9647af0026404f4d37e5d918ddb14019439668b1bcd9d5b70db34584b7af4a9",
+      "termsFile": "../../AI-4/runtime/sherpa-onnx/LICENSE",
+      "termsSHA256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "reviewStatus": "evidence-locked-pending-final-corpus-review",
+      "note": "The OpenSLR declaration names Apache-2.0. The accompanying description's 'free for academic use' sentence is retained verbatim and is not treated as a replacement license."
+    },
+    "officialDownloadBaseURL": "https://www.openslr.org/resources/33/",
+    "archives": [
+      {
+        "name": "data_aishell.tgz",
+        "sizeReportedByOpenSLR": "15G",
+        "md5": "2f494334227864a8a8fec932999db9d8"
+      },
+      {
+        "name": "resource_aishell.tgz",
+        "sizeReportedByOpenSLR": "1.2M",
+        "md5": "957d480a0fcac85fc18e550756f624e5"
+      }
+    ]
+  },
+  "selection": {
+    "split": "test",
+    "cleanMinimumDurationMs": 1800000,
+    "noiseMinimumDurationMs": 1800000,
+    "minimumSpeakersPerGroup": 10,
+    "requiredGenders": [
+      "female",
+      "male"
+    ],
+    "noiseDerivation": {
+      "generator": "prepare_aishell1_corpus.py",
+      "kind": "deterministic synthetic office ambience",
+      "snrDb": 15,
+      "seed": 20260729
+    }
+  },
+  "acceptanceBoundary": {
+    "t01Passed": false,
+    "t05Allowed": false,
+    "reason": "Source and deterministic preparation are selected, but the archives, exact local license snapshot, fixed 60-minute manifest, three Release benchmark rounds, and native-speaker review are not complete."
+  }
+}
