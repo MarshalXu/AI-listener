@@ -1,0 +1,42 @@
+/Users/runner/work/sherpa-onnx/sherpa-onnx/sherpa-onnx/csrc/parse-options.cc:Read:373 /Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/runtime/sherpa-onnx-v1.13.2-osx-arm64-shared-no-tts/bin/sherpa-onnx --tokens=/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/tokens.txt --encoder=/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/encoder-epoch-99-avg-1.int8.onnx --decoder=/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/decoder-epoch-99-avg-1.onnx --joiner=/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/joiner-epoch-99-avg-1.int8.onnx --provider=cpu --num-threads=2 --decoding-method=greedy_search /Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/test_wavs/0.wav /Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/test_wavs/1.wav /Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/test_wavs/8k.wav 
+
+OnlineRecognizerConfig(feat_config=FeatureExtractorConfig(sampling_rate=16000, feature_dim=80, low_freq=20, high_freq=-400, dither=0, normalize_samples=True, snip_edges=False), model_config=OnlineModelConfig(transducer=OnlineTransducerModelConfig(encoder="/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/encoder-epoch-99-avg-1.int8.onnx", decoder="/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/decoder-epoch-99-avg-1.onnx", joiner="/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/joiner-epoch-99-avg-1.int8.onnx"), paraformer=OnlineParaformerModelConfig(encoder="", decoder=""), wenet_ctc=OnlineWenetCtcModelConfig(model="", chunk_size=16, num_left_chunks=4), zipformer2_ctc=OnlineZipformer2CtcModelConfig(model=""), nemo_ctc=OnlineNeMoCtcModelConfig(model=""), t_one_ctc=OnlineToneCtcModelConfig(model=""), provider_config=ProviderConfig(device=0, provider="cpu", cuda_config=CudaConfig(cudnn_conv_algo_search=1), trt_config=TensorrtConfig(trt_max_workspace_size=2147483647, trt_max_partition_iterations=10, trt_min_subgraph_size=5, trt_fp16_enable="True", trt_detailed_build_log="False", trt_engine_cache_enable="True", trt_engine_cache_path=".", trt_timing_cache_enable="True", trt_timing_cache_path=".",trt_dump_subgraphs="False" )), tokens="/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/tokens.txt", num_threads=2, warm_up=0, debug=False, model_type="", modeling_unit="cjkchar", bpe_vocab=""), lm_config=OnlineLMConfig(model="", scale=0.5, lodr_scale=0.01, lodr_fst="", lodr_backoff_id=-1, shallow_fusion=True), endpoint_config=EndpointConfig(rule1=EndpointRule(must_contain_nonsilence=False, min_trailing_silence=2.4, min_utterance_length=0), rule2=EndpointRule(must_contain_nonsilence=True, min_trailing_silence=1.2, min_utterance_length=0), rule3=EndpointRule(must_contain_nonsilence=False, min_trailing_silence=0, min_utterance_length=20)), ctc_fst_decoder_config=OnlineCtcFstDecoderConfig(graph="", max_active=3000), enable_endpoint=True, max_active_paths=4, hotwords_score=1.5, hotwords_file="", decoding_method="greedy_search", blank_penalty=0, temperature_scale=2, rule_fsts="", rule_fars="", reset_encoder=False, hr=HomophoneReplacerConfig(lexicon="", rule_fsts=""))
+/Users/runner/work/sherpa-onnx/sherpa-onnx/sherpa-onnx/csrc/features.cc:AcceptWaveformImpl:111 Creating a resampler:
+   in_sample_rate: 8000
+   output_sample_rate: 16000
+
+/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/test_wavs/0.wav
+Number of threads: 2, Elapsed seconds: 0.11, Audio duration (s): 5.6, Real time factor (RTF) = 0.11/5.6 = 0.02
+对我做了介绍那么我想说的是大家如果对我的研究感兴趣
+{ "text": "对我做了介绍那么我想说的是大家如果对我的研究感兴趣", "tokens": ["对", "我", "做", "了", "介", "绍", "那", "么", "我", "想", "说", "的", "是", "大", "家", "如", "果", "对", "我", "的", "研", "究", "感", "兴", "趣"], "timestamps": [0.32, 0.64, 0.76, 0.88, 1.08, 1.16, 1.96, 2.04, 2.24, 2.36, 2.56, 2.64, 2.76, 3.36, 3.52, 3.64, 3.72, 3.84, 3.92, 4.00, 4.08, 4.24, 4.48, 4.56, 4.72], "ys_probs": [-0.662483, -0.230835, -0.419479, -0.780447, -0.270495, -0.295290, -0.826356, -0.278728, -0.116835, -0.277975, -0.692040, -0.618731, -0.733494, -0.721470, -0.334871, -0.257737, -0.208065, -0.210357, -0.381145, -0.306329, -0.427206, -0.171989, -0.047054, -0.424896, -0.027717], "lm_probs": [], "context_scores": [], "segment": 0, "words": [], "start_time": 0.00, "is_final": false, "is_eof": false}
+
+/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/test_wavs/1.wav
+Number of threads: 2, Elapsed seconds: 0.11, Audio duration (s): 5.2, Real time factor (RTF) = 0.11/5.2 = 0.021
+重点呢想谈三个问题首先就是这一轮全球金融动能的表现
+{ "text": "重点呢想谈三个问题首先就是这一轮全球金融动能的表现", "tokens": ["重", "点", "呢", "想", "谈", "三", "个", "问", "题", "首", "先", "就", "是", "这", "一", "轮", "全", "球", "金", "融", "动", "能", "的", "表", "现"], "timestamps": [0.32, 0.40, 0.64, 0.72, 0.96, 1.08, 1.16, 1.24, 1.56, 2.32, 2.44, 2.80, 3.00, 3.20, 3.28, 3.40, 3.60, 3.84, 3.92, 4.04, 4.20, 4.32, 4.48, 4.64, 4.76], "ys_probs": [-0.951333, -0.376543, -2.204451, -1.345533, -1.196500, -0.288628, -0.272727, -0.912437, -0.157328, -0.092320, -0.404515, -0.582487, -0.498441, -0.463250, -0.288388, -0.431122, -0.508358, -0.191076, -1.777705, -0.819728, -0.780102, -2.342707, -0.846464, -0.393620, -0.179407], "lm_probs": [], "context_scores": [], "segment": 0, "words": [], "start_time": 0.00, "is_final": false, "is_eof": false}
+
+/Users/shawnx/work/paperclip_project/projects/ai-listener/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23/test_wavs/8k.wav
+Number of threads: 2, Elapsed seconds: 0.1, Audio duration (s): 4.5, Real time factor (RTF) = 0.1/4.5 = 0.022
+深入点飞机这一次全球金融动荡背后的根源
+{ "text": "深入点飞机这一次全球金融动荡背后的根源", "tokens": ["深", "入", "点", "飞", "机", "这", "一", "次", "全", "球", "金", "融", "动", "荡", "背", "后", "的", "根", "源"], "timestamps": [0.40, 0.64, 0.80, 0.84, 1.24, 1.92, 2.00, 2.16, 2.68, 2.84, 3.04, 3.20, 3.32, 3.52, 3.60, 3.72, 3.84, 3.96, 4.12], "ys_probs": [-2.302964, -1.737329, -1.901329, -1.964571, -1.597923, -0.343882, -0.362979, -0.789095, -0.311069, -0.729280, -1.457117, -0.790894, -0.812735, -2.125412, -0.608880, -0.455014, -0.229712, -0.607786, -0.168643], "lm_probs": [], "context_scores": [], "segment": 0, "words": [], "start_time": 0.00, "is_final": false, "is_eof": false}
+
+real 0.30
+user 0.48
+sys 0.01
+           128270336  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                8018  page reclaims
+                  25  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 107  involuntary context switches
+         10147766968  instructions retired
+          2192329494  cycles elapsed
+           112788008  peak memory footprint

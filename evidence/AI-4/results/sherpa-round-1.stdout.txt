@@ -1,0 +1,2 @@
+Start to create recognizer
+Recognizer created in 0.18294 s

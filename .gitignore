@@ -1,0 +1,26 @@
+.DS_Store
+
+# Swift Package Manager / Xcode build products
+.build/
+.swiftpm/
+DerivedData/
+*.xcresult
+
+# Local test artifacts
+.test-artifacts/
+
+# Downloaded benchmark runtimes, models, archives, and generated samples
+evidence/**/runtime/
+evidence/**/models/
+evidence/**/samples/
+evidence/**/*.tar
+evidence/**/*.tar.gz
+evidence/**/*.tar.bz2
+evidence/**/*.zip
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.p12
+*.mobileprovision
