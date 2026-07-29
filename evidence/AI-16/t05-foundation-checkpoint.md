@@ -25,9 +25,9 @@ ASR `offer`；ASR 满载采用 drop-newest 并合并报告 `ASR_INPUT_GAP`。
 - `BoundedASRQueue`：固定 capacity、独立 worker、capture-path 非阻塞 offer、
   drop-newest gap、engine/finish failure degradation、deadline finish 和 metrics；
 - `TranscriptEventCoordinator`：cross-session reject、partial higher-revision
-  replace、duplicate `(segmentId,revision)` ignore、finalized strict sequence 和
-  SQLite commit；
-- 4 个定向测试。
+  replace、duplicate `(segmentId,revision)` ignore、乱序 finalized 缓冲后按
+  sequence SQLite commit、重叠拒绝并发 `TRANSCRIPT_ORDER_CONFLICT`；
+- 6 个定向测试。
 
 本 checkpoint **尚未**实现 sherpa C API adapter、PCM format conversion、产品
 coordinator 的 writer-first 接线或滚动字幕 UI，因此不得表述为 T-05 完成。
@@ -44,7 +44,7 @@ swift build -c release
 
 原始观察：
 
-- 定向测试 4/4 通过，0.120 秒；
+- 2026-07-29 最新定向测试 6/6 通过，0.147 秒；
 - 全量测试 30/30 通过，4 suites，0.087 秒；
 - Release build 通过，5.18 秒；
 - 队列测试测得 producer 100 次 offer 小于 0.1 秒，maximum depth 不超过 2，
@@ -72,3 +72,24 @@ rg -n 'URLSession|https?://|WebSocket|grpc|cloud|api[_-]?key' \
 
 停止条件仍为：许可证不兼容、需云/私人音频/新增权限、需破坏批准契约，或 ASR
 背压影响 writer。当前未触发这些停止条件。
+
+## 2026-07-29 continuation
+
+输入：C-03 明确允许 ASR 事件乱序到达，并要求 Coordinator 缓冲后按 sequence
+提交；finalized 时间不可重叠。
+
+输出：`TranscriptEventCoordinator` 新增 pending-final buffer。sequence 1 可先于
+sequence 0 到达而不报错；0 到达后在同一 actor 隔离域内依次提交 0、1。SQLite
+拒绝重叠后，Coordinator 产生安全诊断码 `TRANSCRIPT_ORDER_CONFLICT`，冲突项不
+入库。
+
+验收证据：
+
+```text
+swift test --filter StreamingASRTests
+Test run with 6 tests in 1 suite passed after 0.147 seconds.
+```
+
+停止条件：如果缺失 sequence 永不抵达，pending final 只保留至本次 Session
+Coordinator 生命周期结束，不猜测缺失文本；finish/deadline 的最终降级与产品
+状态接线仍属于后续 T-05 工作。

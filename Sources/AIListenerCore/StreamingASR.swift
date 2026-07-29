@@ -248,18 +248,27 @@ public final class BoundedASRQueue: @unchecked Sendable {
 
 public actor TranscriptEventCoordinator {
     public typealias PartialSink = @MainActor @Sendable ([ASRTranscriptEvent]) -> Void
+    public typealias DiagnosticSink = @Sendable (ASRDiagnostic) -> Void
 
     private let sessionId: String
     private let store: SessionStore
     private let partialSink: PartialSink
+    private let diagnosticSink: DiagnosticSink
     private var partials: [String: ASRTranscriptEvent] = [:]
+    private var pendingFinals: [Int64: ASRTranscriptEvent] = [:]
     private var seen: Set<String> = []
     private var nextFinalSequence: Int64 = 0
 
-    public init(sessionId: String, store: SessionStore, partialSink: @escaping PartialSink) {
+    public init(
+        sessionId: String,
+        store: SessionStore,
+        partialSink: @escaping PartialSink,
+        diagnosticSink: @escaping DiagnosticSink = { _ in }
+    ) {
         self.sessionId = sessionId
         self.store = store
         self.partialSink = partialSink
+        self.diagnosticSink = diagnosticSink
     }
 
     public func consume(_ event: ASRTranscriptEvent) throws {
@@ -281,19 +290,15 @@ public actor TranscriptEventCoordinator {
             guard !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw SessionStoreError.invalidContract("segmentText")
             }
-            guard event.sequence == nextFinalSequence else {
+            guard event.sequence >= nextFinalSequence else {
                 throw SessionStoreError.invalidContract("segmentSequence")
             }
-            try store.insertTranscriptSegment(TranscriptSegmentRecord(
-                segmentId: event.segmentId, sessionId: event.sessionId,
-                revisionOf: nil, status: "finalized", sequence: event.sequence,
-                revision: event.revision, startMs: event.startMs, endMs: event.endMs,
-                text: event.text, createdMonotonicMs: event.createdMonotonicMs,
-                engineId: event.engineId, engineModelVersion: event.engineModelVersion
-            ))
-            nextFinalSequence += 1
-            partials.removeValue(forKey: event.segmentId)
-            publishPartials()
+            if let pending = pendingFinals[event.sequence],
+               pending.createdMonotonicMs <= event.createdMonotonicMs {
+                return
+            }
+            pendingFinals[event.sequence] = event
+            try drainFinals()
         }
     }
 
@@ -306,5 +311,29 @@ public actor TranscriptEventCoordinator {
             ($0.startMs, $0.createdMonotonicMs) < ($1.startMs, $1.createdMonotonicMs)
         }
         Task { @MainActor in partialSink(snapshot) }
+    }
+
+    private func drainFinals() throws {
+        while let event = pendingFinals[nextFinalSequence] {
+            do {
+                try store.insertTranscriptSegment(TranscriptSegmentRecord(
+                    segmentId: event.segmentId, sessionId: event.sessionId,
+                    revisionOf: nil, status: "finalized", sequence: event.sequence,
+                    revision: event.revision, startMs: event.startMs, endMs: event.endMs,
+                    text: event.text, createdMonotonicMs: event.createdMonotonicMs,
+                    engineId: event.engineId, engineModelVersion: event.engineModelVersion
+                ))
+            } catch SessionStoreError.invalidContract("transcriptOrderConflict") {
+                pendingFinals.removeValue(forKey: nextFinalSequence)
+                diagnosticSink(ASRDiagnostic(
+                    code: "TRANSCRIPT_ORDER_CONFLICT", sessionId: sessionId
+                ))
+                throw SessionStoreError.invalidContract("transcriptOrderConflict")
+            }
+            pendingFinals.removeValue(forKey: nextFinalSequence)
+            nextFinalSequence += 1
+            partials.removeValue(forKey: event.segmentId)
+            publishPartials()
+        }
     }
 }

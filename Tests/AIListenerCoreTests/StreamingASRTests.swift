@@ -134,4 +134,66 @@ struct StreamingASRTests {
         )
         await #expect(throws: SessionStoreError.self) { try await coordinator.consume(wrong) }
     }
+
+    @Test func transcriptCoordinatorBuffersOutOfOrderFinalsAndCommitsInSequence() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "ai-listener-asr-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = try SessionStore(databaseURL: root.appending(path: "store.sqlite"))
+        let sessionId = "00000000-0000-0000-0000-000000000001"
+        try store.insertSession(SessionRecord(
+            sessionId: sessionId, state: "recording", transcriptState: "active",
+            createdAtUtc: 1, captureStartMonotonicNs: 1
+        ))
+        let coordinator = TranscriptEventCoordinator(
+            sessionId: sessionId, store: store, partialSink: { _ in }
+        )
+        func final(sequence: Int64, startMs: Int64) -> ASRTranscriptEvent {
+            ASRTranscriptEvent(
+                segmentId: "segment-\(sequence)", sessionId: sessionId, status: .finalized,
+                sequence: sequence, revision: 0, startMs: startMs, endMs: startMs + 100,
+                text: "文本\(sequence)", createdMonotonicMs: 10 - sequence,
+                engineId: "fixture", engineModelVersion: "1"
+            )
+        }
+
+        try await coordinator.consume(final(sequence: 1, startMs: 100))
+        #expect(try await coordinator.persistedSegmentCount() == 0)
+        try await coordinator.consume(final(sequence: 0, startMs: 0))
+        #expect(try await coordinator.persistedSegmentCount() == 2)
+    }
+
+    @Test func transcriptCoordinatorReportsOverlappingFinalConflict() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "ai-listener-asr-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = try SessionStore(databaseURL: root.appending(path: "store.sqlite"))
+        let sessionId = "00000000-0000-0000-0000-000000000001"
+        try store.insertSession(SessionRecord(
+            sessionId: sessionId, state: "recording", transcriptState: "active",
+            createdAtUtc: 1, captureStartMonotonicNs: 1
+        ))
+        let diagnostics = LockedValues<ASRDiagnostic>()
+        let coordinator = TranscriptEventCoordinator(
+            sessionId: sessionId, store: store, partialSink: { _ in },
+            diagnosticSink: { diagnostics.append($0) }
+        )
+        func final(sequence: Int64, startMs: Int64) -> ASRTranscriptEvent {
+            ASRTranscriptEvent(
+                segmentId: "segment-\(sequence)", sessionId: sessionId, status: .finalized,
+                sequence: sequence, revision: 0, startMs: startMs, endMs: startMs + 100,
+                text: "文本", createdMonotonicMs: sequence,
+                engineId: "fixture", engineModelVersion: "1"
+            )
+        }
+
+        try await coordinator.consume(final(sequence: 0, startMs: 0))
+        await #expect(throws: SessionStoreError.self) {
+            try await coordinator.consume(final(sequence: 1, startMs: 50))
+        }
+        #expect(diagnostics.values.contains { $0.code == "TRANSCRIPT_ORDER_CONFLICT" })
+        #expect(try await coordinator.persistedSegmentCount() == 1)
+    }
 }
