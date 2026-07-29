@@ -469,6 +469,13 @@ public final class SessionStore {
         }
     }
 
+    public func transcriptSegmentCount(sessionId: String) throws -> Int {
+        try scalarInt(
+            "SELECT COUNT(*) FROM transcript_segments WHERE session_id = ?",
+            [.text(sessionId)]
+        )
+    }
+
     public func insertRecordingEvent(_ event: RecordingEventRecord) throws {
         try transaction {
             let last = try scalarInt(
