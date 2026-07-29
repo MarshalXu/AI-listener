@@ -36,7 +36,7 @@ struct AtomicAudioAssetWriterTests {
     @Test func commitsReadableCAFAndDatabaseAtomically() throws {
         let (root, store, session, format) = try fixture()
         let writer = try AtomicAudioAssetWriter(assetRoot: root, session: session)
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         try writer.write(buffer(format: format))
         let asset = try writer.finalize(into: store)
 
@@ -63,13 +63,14 @@ struct AtomicAudioAssetWriterTests {
         let writer = try AtomicAudioAssetWriter(
             assetRoot: root, session: session, injecting: [point]
         )
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         try writer.write(buffer(format: format))
         #expect(throws: AudioAssetWriterError.self) {
             _ = try writer.finalize(into: store)
         }
         if point != .manifestCleanup {
-            #expect(try store.count(in: "sessions") == 0)
+            #expect(try store.count(in: "sessions") == 1)
+            #expect(try store.sessionState(sessionId: session.sessionId) == "recording")
             #expect(try store.count(in: "audio_assets") == 0)
         } else {
             #expect(try store.count(in: "sessions") == 1)
@@ -78,16 +79,20 @@ struct AtomicAudioAssetWriterTests {
         #expect(FileManager.default.fileExists(atPath: writer.manifestURL.path))
     }
 
-    @Test func manifestCreationFailureCreatesNoAudioOrDatabaseRows() throws {
+    @Test func manifestCreationFailureLeavesRecordingForDeterministicRecovery() throws {
         let (root, store, session, format) = try fixture()
         let writer = try AtomicAudioAssetWriter(
             assetRoot: root, session: session, injecting: [.manifestCreate]
         )
         #expect(throws: AudioAssetWriterError.injected(.manifestCreate)) {
-            try writer.begin(format: format)
+            try writer.begin(format: format, store: store)
         }
         #expect(!FileManager.default.fileExists(atPath: writer.temporaryURL.path))
-        #expect(try store.count(in: "sessions") == 0)
+        #expect(try store.sessionState(sessionId: session.sessionId) == "recording")
+        let reconciler = try AudioRecoveryReconciler(assetRoot: root)
+        #expect(try reconciler.reconcileAll(store: store) == [
+            .failedRecording(sessionId: session.sessionId, reason: "manifestAndFileMissing")
+        ])
     }
 
     @Test func diskFullDuringWriteNeverPublishesReadyAndIsRecoverable() throws {
@@ -95,11 +100,11 @@ struct AtomicAudioAssetWriterTests {
         let writer = try AtomicAudioAssetWriter(
             assetRoot: root, session: session, injecting: [.diskFullDuringWrite]
         )
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         #expect(throws: AudioAssetWriterError.injected(.diskFullDuringWrite)) {
             try writer.write(buffer(format: format))
         }
-        #expect(try store.count(in: "sessions") == 0)
+        #expect(try store.sessionState(sessionId: session.sessionId) == "recording")
         #expect(try store.count(in: "audio_assets") == 0)
         #expect(FileManager.default.fileExists(atPath: writer.manifestURL.path))
 
@@ -118,7 +123,7 @@ struct AtomicAudioAssetWriterTests {
         let writer = try AtomicAudioAssetWriter(
             assetRoot: root, session: session, injecting: [.databaseCommit]
         )
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         try writer.write(buffer(format: format))
         #expect(throws: AudioAssetWriterError.injected(.databaseCommit)) {
             _ = try writer.finalize(into: store)
@@ -139,7 +144,7 @@ struct AtomicAudioAssetWriterTests {
         let writer = try AtomicAudioAssetWriter(
             assetRoot: root, session: session, injecting: [.manifestCleanup]
         )
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         try writer.write(buffer(format: format))
         #expect(throws: AudioAssetWriterError.injected(.manifestCleanup)) {
             _ = try writer.finalize(into: store)
@@ -153,12 +158,46 @@ struct AtomicAudioAssetWriterTests {
         #expect(!FileManager.default.fileExists(atPath: writer.manifestURL.path))
     }
 
+    @Test(arguments: [false, true])
+    func startupAuditWithdrawsFalseReadyWithoutManifest(tamperExistingFile: Bool) throws {
+        let (root, store, session, format) = try fixture()
+        let writer = try AtomicAudioAssetWriter(assetRoot: root, session: session)
+        try writer.begin(format: format, store: store)
+        try writer.write(buffer(format: format))
+        _ = try writer.finalize(into: store)
+        if tamperExistingFile {
+            let handle = try FileHandle(forWritingTo: writer.stableURL)
+            try handle.seek(toOffset: 0)
+            try handle.write(contentsOf: Data([0x00]))
+            try handle.close()
+        } else {
+            try FileManager.default.removeItem(at: writer.stableURL)
+        }
+
+        let reconciler = try AudioRecoveryReconciler(assetRoot: root)
+        #expect(try reconciler.reconcileAll(store: store) == [
+            .recoveryRequired(
+                sessionId: session.sessionId, reason: "committedAssetMissingOrInvalid"
+            )
+        ])
+        #expect(try store.sessionState(sessionId: session.sessionId) == "recoveryRequired")
+        #expect(try store.committedAudioIntegrityRecords().isEmpty)
+        if tamperExistingFile {
+            #expect(FileManager.default.fileExists(
+                atPath: root.appending(
+                    path: "quarantine/\(session.sessionId)-committed-\(session.sessionId).caf"
+                ).path
+            ))
+        }
+        #expect(try reconciler.reconcileAll(store: store).isEmpty)
+    }
+
     @Test func startupRecoveryQuarantinesHashMismatchWithoutReady() throws {
         let (root, store, session, format) = try fixture()
         let writer = try AtomicAudioAssetWriter(
             assetRoot: root, session: session, injecting: [.databaseCommit]
         )
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         try writer.write(buffer(format: format))
         #expect(throws: AudioAssetWriterError.injected(.databaseCommit)) {
             _ = try writer.finalize(into: store)
@@ -186,7 +225,7 @@ struct AtomicAudioAssetWriterTests {
         let writer = try AtomicAudioAssetWriter(
             assetRoot: root, session: session, injecting: [.audioSync]
         )
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         try writer.write(buffer(format: format))
         #expect(throws: AudioAssetWriterError.injected(.audioSync)) {
             _ = try writer.finalize(into: store)
@@ -208,7 +247,7 @@ struct AtomicAudioAssetWriterTests {
         let writer = try AtomicAudioAssetWriter(
             assetRoot: root, session: session, injecting: [.databaseCommit]
         )
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         try writer.write(buffer(format: format))
         #expect(throws: AudioAssetWriterError.injected(.databaseCommit)) {
             _ = try writer.finalize(into: store)
@@ -246,7 +285,7 @@ struct AtomicAudioAssetWriterTests {
     @Test func deletionFailureStaysDeletingAndStartupRetryIsIdempotent() throws {
         let (root, store, session, format) = try fixture()
         let writer = try AtomicAudioAssetWriter(assetRoot: root, session: session)
-        try writer.begin(format: format)
+        try writer.begin(format: format, store: store)
         try writer.write(buffer(format: format))
         _ = try writer.finalize(into: store)
 

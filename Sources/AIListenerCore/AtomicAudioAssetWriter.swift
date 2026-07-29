@@ -79,13 +79,14 @@ public final class AtomicAudioAssetWriter: @unchecked Sendable {
     public var temporaryURL: URL { assetRoot.appending(path: "\(session.sessionId).audio.tmp") }
     public var stableURL: URL { assetRoot.appending(path: "\(session.sessionId).caf") }
 
-    public func begin(format: AVAudioFormat) throws {
+    public func begin(format: AVAudioFormat, store: SessionStore) throws {
         guard audioFile == nil, !fileManager.fileExists(atPath: temporaryURL.path),
               !fileManager.fileExists(atPath: stableURL.path) else {
             throw AudioAssetWriterError.invalidState
         }
         try validateContained(temporaryURL)
         try validateContained(stableURL)
+        try store.insertSession(session)
         try inject(.manifestCreate)
         let manifest = RecoveryManifest(
             version: RecoveryManifest.currentVersion,

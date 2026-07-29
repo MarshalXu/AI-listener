@@ -73,6 +73,11 @@ public struct AudioAssetRecord: Sendable, Equatable {
     }
 }
 
+public struct CommittedAudioIntegrityRecord: Sendable, Equatable {
+    public let session: SessionRecord
+    public let asset: AudioAssetRecord
+}
+
 public struct TranscriptSegmentRecord: Sendable, Equatable {
     public let segmentId: String
     public let sessionId: String
@@ -285,6 +290,83 @@ public final class SessionStore {
 
     public func referencedAudioPaths() throws -> Set<String> {
         Set(try textRows("SELECT relative_path FROM audio_assets"))
+    }
+
+    public func committedAudioIntegrityRecords() throws -> [CommittedAudioIntegrityRecord] {
+        var statement: OpaquePointer?
+        try prepare(
+            """
+            SELECT s.session_id, s.state, s.transcript_state, s.created_at_utc,
+              s.capture_start_monotonic_ns, s.last_event_sequence, s.ended_at_utc,
+              s.termination_reason, s.committed_audio_asset_id, s.last_error_id,
+              a.audio_asset_id, a.relative_path, a.container, a.codec, a.sample_rate_hz,
+              a.channel_count, a.duration_ms, a.byte_count, a.sha256, a.commit_state
+            FROM sessions s JOIN audio_assets a
+              ON a.audio_asset_id = s.committed_audio_asset_id
+            WHERE s.state IN ('ready','recovered') AND a.commit_state = 'committed'
+            ORDER BY s.session_id
+            """,
+            into: &statement
+        )
+        defer { sqlite3_finalize(statement) }
+        var records: [CommittedAudioIntegrityRecord] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            func textColumn(_ index: Int32) -> String {
+                String(cString: sqlite3_column_text(statement, index))
+            }
+            func optionalTextColumn(_ index: Int32) -> String? {
+                guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+                return textColumn(index)
+            }
+            func optionalIntColumn(_ index: Int32) -> Int64? {
+                guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+                return sqlite3_column_int64(statement, index)
+            }
+            let sessionId = textColumn(0)
+            records.append(CommittedAudioIntegrityRecord(
+                session: SessionRecord(
+                    sessionId: sessionId, state: textColumn(1),
+                    transcriptState: textColumn(2),
+                    createdAtUtc: sqlite3_column_int64(statement, 3),
+                    captureStartMonotonicNs: sqlite3_column_int64(statement, 4),
+                    lastEventSequence: sqlite3_column_int64(statement, 5),
+                    endedAtUtc: optionalIntColumn(6),
+                    terminationReason: optionalTextColumn(7),
+                    committedAudioAssetId: optionalTextColumn(8),
+                    lastErrorId: optionalTextColumn(9)
+                ),
+                asset: AudioAssetRecord(
+                    audioAssetId: textColumn(10), sessionId: sessionId,
+                    relativePath: textColumn(11), container: textColumn(12),
+                    codec: textColumn(13),
+                    sampleRateHz: sqlite3_column_int64(statement, 14),
+                    channelCount: sqlite3_column_int64(statement, 15),
+                    durationMs: sqlite3_column_int64(statement, 16),
+                    byteCount: sqlite3_column_int64(statement, 17),
+                    sha256: textColumn(18), commitState: textColumn(19)
+                )
+            ))
+        }
+        return records
+    }
+
+    public func markCommittedAssetRecoveryRequired(session: SessionRecord) throws {
+        try transaction {
+            try execute(
+                """
+                UPDATE sessions SET state = 'recoveryRequired',
+                  committed_audio_asset_id = NULL WHERE session_id = ?
+                """,
+                [.text(session.sessionId)]
+            )
+            try execute(
+                """
+                UPDATE audio_assets SET commit_state = 'quarantined'
+                WHERE session_id = ? AND commit_state = 'committed'
+                """,
+                [.text(session.sessionId)]
+            )
+        }
     }
 
     public func audioPathForDeletion(sessionId: String) throws -> String? {

@@ -45,6 +45,24 @@ public final class AudioRecoveryReconciler {
                 sessionId: sessionId, reason: "manifestAndFileMissing"
             ))
         }
+        for record in try store.committedAudioIntegrityRecords() {
+            let stable = assetRoot.appending(path: record.asset.relativePath)
+            guard validLeaf(record.asset.relativePath),
+                  fileManager.fileExists(atPath: stable.path),
+                  try matches(stable, record.asset.byteCount, record.asset.sha256),
+                  readableCAF(stable) else {
+                if validLeaf(record.asset.relativePath),
+                   fileManager.fileExists(atPath: stable.path) {
+                    try quarantineCommitted(stable, sessionId: record.session.sessionId)
+                }
+                try store.markCommittedAssetRecoveryRequired(session: record.session)
+                outcomes.append(.recoveryRequired(
+                    sessionId: record.session.sessionId,
+                    reason: "committedAssetMissingOrInvalid"
+                ))
+                continue
+            }
+        }
         let referenced = try store.referencedAudioPaths()
         var manifestPaths = Set<String>()
         for url in manifests {
@@ -201,6 +219,18 @@ public final class AudioRecoveryReconciler {
     private func quarantineOrphan(_ url: URL) throws {
         try fileManager.createDirectory(at: quarantineRoot, withIntermediateDirectories: true)
         let destination = quarantineRoot.appending(path: "orphan-\(url.lastPathComponent)")
+        if !fileManager.fileExists(atPath: destination.path) {
+            try fileManager.moveItem(at: url, to: destination)
+        }
+        try syncDirectory(quarantineRoot)
+        try syncDirectory(assetRoot)
+    }
+
+    private func quarantineCommitted(_ url: URL, sessionId: String) throws {
+        try fileManager.createDirectory(at: quarantineRoot, withIntermediateDirectories: true)
+        let destination = quarantineRoot.appending(
+            path: "\(sessionId)-committed-\(url.lastPathComponent)"
+        )
         if !fileManager.fileExists(atPath: destination.path) {
             try fileManager.moveItem(at: url, to: destination)
         }
