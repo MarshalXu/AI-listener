@@ -1,5 +1,22 @@
 # T-01 deterministic benchmark harness
 
+`aggregate_release_rounds.py` is the final automatic evidence boundary for the
+three required M5 Max Release executions. It accepts exactly three distinct raw
+result files, re-validates every round against the same hashed corpus manifest,
+requires explicit OS/toolchain/power/thermal/model/runtime/installed-size
+evidence plus one positive peak-RSS measurement per round, and records absolute
+RSS and unified-memory fraction. It intentionally keeps `t01Passed=false`
+because the separate three-native-speaker review cannot be inferred from
+automatic metrics.
+
+```sh
+python3 aggregate_release_rounds.py \
+  --manifest /path/to/corpus/manifest.json \
+  --results /path/to/round-{1,2,3}.json \
+  --environment /path/to/environment.json \
+  --output /path/to/three-round-report.json
+```
+
 Latest checkpoint: `../t01-license-source-snapshot.md` locks the official
 OpenSLR license declaration and complete accompanying description byte-for-byte,
 and makes source archive verification fail closed when any license evidence or
