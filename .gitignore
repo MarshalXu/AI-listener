@@ -15,6 +15,7 @@ evidence/**/models/
 evidence/**/samples/
 evidence/**/*.tar
 evidence/**/*.tar.gz
+evidence/**/*.tgz
 evidence/**/*.tar.bz2
 evidence/**/*.zip
 
