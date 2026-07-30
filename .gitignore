@@ -5,9 +5,19 @@
 .swiftpm/
 DerivedData/
 *.xcresult
+dist/
 
 # Local test artifacts
 .test-artifacts/
+*.log
+
+# Local application data and recordings
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.caf
+*.wav
+*.m4a
 
 # Downloaded benchmark runtimes, models, archives, and generated samples
 evidence/**/runtime/
