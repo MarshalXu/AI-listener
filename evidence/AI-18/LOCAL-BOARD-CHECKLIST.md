@@ -3,6 +3,10 @@
 仅使用测试人员现场口述内容，不使用或上传真实用户录音。开始前确认网络可断开，
 系统设置中只涉及 Microphone；不得授予 Screen Recording。
 
+本清单必须使用修复首轮空 `frameSink` 缺陷之后的 Release；先核对
+`dist/AIListener.app.sha256` 自身 SHA-256 为
+`c92fe5e00d2ce9d7a20b1ada3215f3ad5a64af50c8a4aa3f0aac525c064fdd2b`。
+
 ## TCC 与闭环
 
 - [ ] 校验 `dist/AIListener.app.sha256`，确认 `codesign --verify --deep --strict` 成功。

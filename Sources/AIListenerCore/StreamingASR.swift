@@ -376,11 +376,13 @@ public final class BoundedASRQueue: @unchecked Sendable {
 
 public actor TranscriptEventCoordinator {
     public typealias PartialSink = @MainActor @Sendable ([ASRTranscriptEvent]) -> Void
+    public typealias FinalizedSink = @MainActor @Sendable (ASRTranscriptEvent) -> Void
     public typealias DiagnosticSink = @Sendable (ASRDiagnostic) -> Void
 
     private let sessionId: String
     private let store: SessionStore
     private let partialSink: PartialSink
+    private let finalizedSink: FinalizedSink
     private let diagnosticSink: DiagnosticSink
     private var partials: [String: ASRTranscriptEvent] = [:]
     private var pendingFinals: [Int64: ASRTranscriptEvent] = [:]
@@ -391,11 +393,13 @@ public actor TranscriptEventCoordinator {
         sessionId: String,
         store: SessionStore,
         partialSink: @escaping PartialSink,
+        finalizedSink: @escaping FinalizedSink = { _ in },
         diagnosticSink: @escaping DiagnosticSink = { _ in }
     ) {
         self.sessionId = sessionId
         self.store = store
         self.partialSink = partialSink
+        self.finalizedSink = finalizedSink
         self.diagnosticSink = diagnosticSink
     }
 
@@ -462,6 +466,7 @@ public actor TranscriptEventCoordinator {
             nextFinalSequence += 1
             partials.removeValue(forKey: event.segmentId)
             publishPartials()
+            Task { @MainActor in finalizedSink(event) }
         }
     }
 }

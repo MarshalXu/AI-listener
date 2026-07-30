@@ -221,6 +221,58 @@ struct StreamingASRTests {
         #expect(diagnostics.values.contains { $0.code == "ASR_ENGINE_FAILED" })
     }
 
+    @Test func productPipelineWritesAudioRunsASRAndPersistsFinalizedTranscript() throws {
+        final class ProductEngine: LocalStreamingASREngine, @unchecked Sendable {
+            private var last: ASRInputFrame?
+
+            func accept(_ frame: ASRInputFrame) throws -> [ASRTranscriptEvent] {
+                last = frame
+                return [ASRTranscriptEvent(
+                    segmentId: "\(frame.sessionId)-0", sessionId: frame.sessionId,
+                    status: .partial, sequence: 0, revision: 0,
+                    startMs: frame.startMs, endMs: max(frame.startMs + frame.durationMs, 1),
+                    text: "你好", createdMonotonicMs: 1,
+                    engineId: "fixture", engineModelVersion: "product-wiring"
+                )]
+            }
+
+            func finish() throws -> [ASRTranscriptEvent] {
+                guard let frame = last else { return [] }
+                return [ASRTranscriptEvent(
+                    segmentId: "\(frame.sessionId)-0", sessionId: frame.sessionId,
+                    status: .finalized, sequence: 0, revision: 1,
+                    startMs: frame.startMs, endMs: max(frame.startMs + frame.durationMs, 1),
+                    text: "你好世界", createdMonotonicMs: 2,
+                    engineId: "fixture", engineModelVersion: "product-wiring"
+                )]
+            }
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "ai-listener-product-pipeline-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let assets = root.appending(path: "Audio")
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        let store = try SessionStore(databaseURL: root.appending(path: "sessions.sqlite"))
+        let sessionId = UUID().uuidString
+        let pipeline = try RecordingSessionPipeline(
+            store: store, assetRoot: assets, engine: ProductEngine(),
+            sessionId: sessionId, captureStartMonotonicNanoseconds: 1,
+            partialSink: { _ in }, finalizedSink: { _ in }, diagnosticSink: { _ in }
+        )
+
+        try pipeline.consume(AudioFrame(
+            buffer: pcmBuffer(channels: 1), monotonicNanoseconds: 1
+        ))
+        let asset = try pipeline.finish()
+
+        #expect(FileManager.default.fileExists(atPath: assets.appending(path: asset.relativePath).path))
+        #expect(try store.transcriptSegmentCount(sessionId: sessionId) == 1)
+        let detail = try #require(try store.playableSession(sessionId: sessionId))
+        #expect(detail.session.state == "ready")
+        #expect(detail.segments.map(\.text) == ["你好世界"])
+    }
+
     @Test func queueIsBoundedAndReportsGapWithoutBlockingProducer() {
         let engine = FixtureEngine(delay: 0.03)
         let diagnostics = LockedValues<ASRDiagnostic>()

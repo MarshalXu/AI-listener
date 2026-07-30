@@ -23,25 +23,80 @@ struct AIListenerApp: App {
 final class CaptureViewModel: ObservableObject {
     @Published private(set) var status = CaptureStatus()
     @Published private(set) var recentEvents: [CaptureEvent] = []
-    private lazy var coordinator = CaptureCoordinator(
-        permission: SystemMicrophonePermissionProvider(),
-        capture: AVFoundationMicrophoneCapture(),
-        statusSink: { [weak self] in self?.status = $0 },
-        eventSink: { [weak self] event in
-            Task { @MainActor in
-                self?.recentEvents.append(event)
-                if self?.recentEvents.count ?? 0 > 20 { self?.recentEvents.removeFirst() }
-            }
-        }
-    )
+    @Published private(set) var partials: [ASRTranscriptEvent] = []
+    @Published private(set) var finalized: [ASRTranscriptEvent] = []
+    @Published private(set) var pipelineErrorCode: String?
+    private var coordinator: CaptureCoordinator?
+    private var pipeline: RecordingSessionPipeline?
 
     var isRecording: Bool { status.state == .recording }
     var canStart: Bool { status.state == .idle || status.state == .failed }
     var canStop: Bool { status.state == .recording || status.state == .interrupted }
 
-    func start() { Task { await coordinator.startFromExplicitUserAction() } }
-    func stop() { Task { await coordinator.stop() } }
-    func retry() { Task { await coordinator.retry() } }
+    func start() {
+        do {
+            let support = try FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask,
+                appropriateFor: nil, create: true
+            ).appending(path: "AIListener", directoryHint: .isDirectory)
+            let assets = support.appending(path: "Audio", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+            let store = try SessionStore(databaseURL: support.appending(path: "sessions.sqlite"))
+            guard let paths = SherpaModelPaths.bundled() else {
+                pipelineErrorCode = "ASR_BUNDLE_MISSING"
+                return
+            }
+            let engine = try SherpaStreamingASREngine(
+                paths: paths, modelVersion: "zh-14M-2023-02-23"
+            )
+            partials = []
+            finalized = []
+            pipelineErrorCode = nil
+            let pipeline = try RecordingSessionPipeline(
+                store: store, assetRoot: assets, engine: engine,
+                partialSink: { [weak self] in self?.partials = $0 },
+                finalizedSink: { [weak self] event in self?.finalized.append(event) },
+                diagnosticSink: { [weak self] diagnostic in
+                    Task { @MainActor in self?.pipelineErrorCode = diagnostic.code }
+                }
+            )
+            self.pipeline = pipeline
+            let coordinator = CaptureCoordinator(
+                permission: SystemMicrophonePermissionProvider(),
+                capture: AVFoundationMicrophoneCapture(),
+                statusSink: { [weak self] in self?.status = $0 },
+                eventSink: { [weak self] event in
+                    Task { @MainActor in
+                        self?.recentEvents.append(event)
+                        if self?.recentEvents.count ?? 0 > 20 { self?.recentEvents.removeFirst() }
+                    }
+                },
+                frameSink: { [weak self, pipeline] frame in
+                    do { try pipeline.consume(frame) }
+                    catch {
+                        Task { @MainActor in self?.pipelineErrorCode = "AUDIO_WRITE_FAILED" }
+                    }
+                }
+            )
+            self.coordinator = coordinator
+            Task { await coordinator.startFromExplicitUserAction() }
+        } catch {
+            pipelineErrorCode = "RECORDING_PIPELINE_START_FAILED"
+        }
+    }
+
+    func stop() {
+        guard let coordinator else { return }
+        Task {
+            await coordinator.stop()
+            do { try pipeline?.finish() }
+            catch { pipelineErrorCode = "RECORDING_PIPELINE_FINISH_FAILED" }
+            pipeline = nil
+            self.coordinator = nil
+        }
+    }
+
+    func retry() { start() }
 
     func openMicrophoneSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else { return }
@@ -79,6 +134,27 @@ struct ContentView: View {
                 Button("打开麦克风隐私设置", action: model.openMicrophoneSettings)
             }
 
+            List {
+                ForEach(model.finalized, id: \.segmentId) { event in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(timestamp(event.startMs)).font(.caption.monospacedDigit())
+                        Text(event.text)
+                    }
+                }
+                ForEach(model.partials, id: \.segmentId) { event in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(timestamp(event.startMs)).font(.caption.monospacedDigit())
+                        Text(event.text).foregroundStyle(.secondary)
+                        Text("…").foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(minHeight: 180)
+
+            if let code = model.pipelineErrorCode {
+                Text("本地处理错误：\(code)").foregroundStyle(.red)
+            }
+
             Text("仅捕获麦克风；音频与 finalized 逐字稿只保存在本机。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -103,5 +179,10 @@ struct ContentView: View {
         if let code = model.status.errorCode { return "错误码：\(code)" }
         if let reason = model.status.terminationReason { return "终止原因：\(reason.rawValue)" }
         return "录音只会在你点击“开始录音”后启动。"
+    }
+
+    private func timestamp(_ milliseconds: Int64) -> String {
+        String(format: "%02lld:%02lld.%03lld",
+               milliseconds / 60_000, (milliseconds / 1_000) % 60, milliseconds % 1_000)
     }
 }
