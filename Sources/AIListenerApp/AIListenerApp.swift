@@ -8,8 +8,13 @@ struct AIListenerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model)
-                .frame(minWidth: 440, minHeight: 280)
+            TabView {
+                ContentView(model: model)
+                    .tabItem { Label("录音", systemImage: "mic") }
+                SessionLibraryView()
+                    .tabItem { Label("记录", systemImage: "list.bullet") }
+            }
+            .frame(minWidth: 680, minHeight: 480)
         }
     }
 }
@@ -74,7 +79,7 @@ struct ContentView: View {
                 Button("打开麦克风隐私设置", action: model.openMicrophoneSettings)
             }
 
-            Text("仅捕获麦克风；本增量不保存、不上传音频。")
+            Text("仅捕获麦克风；音频与 finalized 逐字稿只保存在本机。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

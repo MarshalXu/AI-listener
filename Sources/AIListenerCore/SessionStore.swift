@@ -78,6 +78,22 @@ public struct CommittedAudioIntegrityRecord: Sendable, Equatable {
     public let asset: AudioAssetRecord
 }
 
+public struct SessionListItem: Sendable, Equatable, Identifiable {
+    public var id: String { sessionId }
+    public let sessionId: String
+    public let createdAtUtc: Int64
+    public let endedAtUtc: Int64?
+    public let durationMs: Int64
+    public let transcriptState: String
+    public let previewText: String?
+}
+
+public struct SessionDetail: Sendable, Equatable {
+    public let session: SessionRecord
+    public let asset: AudioAssetRecord
+    public let segments: [TranscriptSegmentRecord]
+}
+
 public struct TranscriptSegmentRecord: Sendable, Equatable {
     public let segmentId: String
     public let sessionId: String
@@ -348,6 +364,80 @@ public final class SessionStore {
             ))
         }
         return records
+    }
+
+    /// Returns only sessions whose audio has completed the repository commit protocol.
+    public func listPlayableSessions() throws -> [SessionListItem] {
+        var statement: OpaquePointer?
+        try prepare(
+            """
+            SELECT s.session_id, s.created_at_utc, s.ended_at_utc, a.duration_ms,
+              s.transcript_state,
+              (SELECT text FROM transcript_segments t
+               WHERE t.session_id = s.session_id AND t.status = 'finalized'
+               ORDER BY t.start_ms, t.sequence LIMIT 1)
+            FROM sessions s JOIN audio_assets a
+              ON a.audio_asset_id = s.committed_audio_asset_id
+            WHERE s.state IN ('ready','recovered') AND a.commit_state = 'committed'
+            ORDER BY s.created_at_utc DESC, s.session_id
+            """,
+            into: &statement
+        )
+        defer { sqlite3_finalize(statement) }
+        var items: [SessionListItem] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            items.append(SessionListItem(
+                sessionId: requiredText(statement, 0),
+                createdAtUtc: sqlite3_column_int64(statement, 1),
+                endedAtUtc: optionalInteger(statement, 2),
+                durationMs: sqlite3_column_int64(statement, 3),
+                transcriptState: requiredText(statement, 4),
+                previewText: optionalText(statement, 5)
+            ))
+        }
+        return items
+    }
+
+    /// Rehydrates the committed audio reference and finalized transcript truth view.
+    public func playableSession(sessionId: String) throws -> SessionDetail? {
+        guard UUID(uuidString: sessionId) != nil else {
+            throw SessionStoreError.invalidContract("sessionId")
+        }
+        let records = try committedAudioIntegrityRecords()
+        guard let record = records.first(where: { $0.session.sessionId == sessionId }) else {
+            return nil
+        }
+        var statement: OpaquePointer?
+        try prepare(
+            """
+            SELECT segment_id, session_id, revision_of, status, sequence, revision,
+              start_ms, end_ms, text, created_monotonic_ms, engine_id, engine_model_version
+            FROM transcript_segments
+            WHERE session_id = ? AND status = 'finalized'
+            ORDER BY start_ms, sequence
+            """,
+            into: &statement
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([.text(sessionId)], to: statement)
+        var segments: [TranscriptSegmentRecord] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            segments.append(TranscriptSegmentRecord(
+                segmentId: requiredText(statement, 0),
+                sessionId: requiredText(statement, 1),
+                revisionOf: optionalText(statement, 2),
+                status: requiredText(statement, 3),
+                sequence: sqlite3_column_int64(statement, 4),
+                revision: sqlite3_column_int64(statement, 5),
+                startMs: sqlite3_column_int64(statement, 6),
+                endMs: sqlite3_column_int64(statement, 7),
+                text: requiredText(statement, 8),
+                createdMonotonicMs: sqlite3_column_int64(statement, 9),
+                engineId: requiredText(statement, 10),
+                engineModelVersion: requiredText(statement, 11)
+            ))
+        }
+        return SessionDetail(session: record.session, asset: record.asset, segments: segments)
     }
 
     public func markCommittedAssetRecoveryRequired(session: SessionRecord) throws {
@@ -687,6 +777,37 @@ public final class SessionStore {
         case integer(Int64), text(String), null
         static func optionalInteger(_ value: Int64?) -> Self { value.map(Self.integer) ?? .null }
         static func optionalText(_ value: String?) -> Self { value.map(Self.text) ?? .null }
+    }
+
+    private func bind(_ bindings: [Binding], to statement: OpaquePointer?) throws {
+        for (offset, binding) in bindings.enumerated() {
+            let index = Int32(offset + 1)
+            let result: Int32
+            switch binding {
+            case .integer(let value): result = sqlite3_bind_int64(statement, index, value)
+            case .text(let value):
+                result = sqlite3_bind_text(
+                    statement, index, value, -1,
+                    unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+                )
+            case .null: result = sqlite3_bind_null(statement, index)
+            }
+            guard result == SQLITE_OK else { throw currentError() }
+        }
+    }
+
+    private func requiredText(_ statement: OpaquePointer?, _ index: Int32) -> String {
+        String(cString: sqlite3_column_text(statement, index))
+    }
+
+    private func optionalText(_ statement: OpaquePointer?, _ index: Int32) -> String? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return requiredText(statement, index)
+    }
+
+    private func optionalInteger(_ statement: OpaquePointer?, _ index: Int32) -> Int64? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return sqlite3_column_int64(statement, index)
     }
 
     private func execute(_ sql: String, _ bindings: [Binding] = []) throws {
