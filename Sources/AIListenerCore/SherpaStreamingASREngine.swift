@@ -17,14 +17,24 @@ public struct SherpaModelPaths: Sendable, Equatable {
     }
 
     public static func bundled(in bundle: Bundle = .main) -> SherpaModelPaths? {
-        guard let runtime = bundle.url(
-            forResource: "libsherpa-onnx-c-api", withExtension: "dylib",
-            subdirectory: "Contents/Frameworks"
-        ) ?? bundle.url(forResource: "libsherpa-onnx-c-api", withExtension: "dylib"),
-        let encoder = bundle.url(forResource: "encoder-epoch-99-avg-1.int8", withExtension: "onnx"),
-        let decoder = bundle.url(forResource: "decoder-epoch-99-avg-1", withExtension: "onnx"),
-        let joiner = bundle.url(forResource: "joiner-epoch-99-avg-1.int8", withExtension: "onnx"),
-        let tokens = bundle.url(forResource: "tokens", withExtension: "txt") else { return nil }
+        let frameworks = bundle.bundleURL.appending(path: "Contents/Frameworks")
+        let runtime = frameworks.appending(path: "libsherpa-onnx-c-api.dylib")
+        guard FileManager.default.fileExists(atPath: runtime.path),
+        let encoder = bundle.url(
+            forResource: "encoder-epoch-99-avg-1.int8", withExtension: "onnx",
+            subdirectory: "Model"
+        ),
+        let decoder = bundle.url(
+            forResource: "decoder-epoch-99-avg-1", withExtension: "onnx",
+            subdirectory: "Model"
+        ),
+        let joiner = bundle.url(
+            forResource: "joiner-epoch-99-avg-1.int8", withExtension: "onnx",
+            subdirectory: "Model"
+        ),
+        let tokens = bundle.url(
+            forResource: "tokens", withExtension: "txt", subdirectory: "Model"
+        ) else { return nil }
         return SherpaModelPaths(
             library: runtime, encoder: encoder, decoder: decoder, joiner: joiner, tokens: tokens
         )

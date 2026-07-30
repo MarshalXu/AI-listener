@@ -1,0 +1,11 @@
+{
+  "elapsedSeconds" : 31.099192792,
+  "finalizedEvents" : 310,
+  "inputFrames" : 18605,
+  "networkAPI" : "none",
+  "partialEvents" : 18166,
+  "peakRSSBytes" : 132874240,
+  "processedAudioSeconds" : 3600.1714999989476,
+  "realTimeFactor" : 0.008638253147665073,
+  "requestedAudioSeconds" : 3600
+}

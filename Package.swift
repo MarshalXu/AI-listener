@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "AIListenerCore", targets: ["AIListenerCore"]),
         .executable(name: "AIListenerApp", targets: ["AIListenerApp"]),
+        .executable(name: "AIListenerASRStress", targets: ["AIListenerASRStress"]),
     ],
     targets: [
         .systemLibrary(name: "CSQLite"),
@@ -20,6 +21,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "AIListenerApp",
+            dependencies: ["AIListenerCore"]
+        ),
+        .executableTarget(
+            name: "AIListenerASRStress",
             dependencies: ["AIListenerCore"]
         ),
         .testTarget(

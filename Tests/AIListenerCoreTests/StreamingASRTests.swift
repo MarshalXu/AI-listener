@@ -5,6 +5,40 @@ import Testing
 
 @Suite(.serialized)
 struct StreamingASRTests {
+    @Test func bundledPathsUseStandardFrameworksAndResourcesDirectories() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "AIListener-bundle-\(UUID().uuidString).app")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let frameworks = root.appending(path: "Contents/Frameworks")
+        let model = root.appending(path: "Contents/Resources/Model")
+        try FileManager.default.createDirectory(at: frameworks, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+        try Data("runtime".utf8).write(
+            to: frameworks.appending(path: "libsherpa-onnx-c-api.dylib")
+        )
+        for name in [
+            "encoder-epoch-99-avg-1.int8.onnx", "decoder-epoch-99-avg-1.onnx",
+            "joiner-epoch-99-avg-1.int8.onnx", "tokens.txt",
+        ] {
+            try Data(name.utf8).write(to: model.appending(path: name))
+        }
+        try Data("""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+        <key>CFBundleIdentifier</key><string>com.ailistener.fixture</string>
+        <key>CFBundleName</key><string>AIListenerFixture</string>
+        <key>CFBundlePackageType</key><string>APPL</string>
+        </dict></plist>
+        """.utf8).write(to: root.appending(path: "Contents/Info.plist"))
+
+        let bundle = try #require(Bundle(url: root))
+        let paths = try #require(SherpaModelPaths.bundled(in: bundle))
+        #expect(paths.library.path == frameworks.appending(path: "libsherpa-onnx-c-api.dylib").path)
+        #expect(paths.tokens.path == model.appending(path: "tokens.txt").path)
+    }
+
     @Test func sherpaAdapterRejectsMissingRuntimeBeforeLoadingModel() {
         let root = URL(fileURLWithPath: "/definitely-missing-ai-listener-runtime")
         #expect(throws: SherpaStreamingASRError.missingFile("library")) {

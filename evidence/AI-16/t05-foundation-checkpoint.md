@@ -250,6 +250,70 @@ RSS/RTF、队列/文件 duration 对账与运行时无连接取证。该工作�
 continuation，不需要 Board 普通工程决策；只有许可证不兼容、新权限、云/私人
 数据或门槛/范围变化才升级。
 
+## 2026-07-30 Release bundle / long-input verification
+
+### 规格状态
+
+无规格变化。完整 T-07 三轮 60 分钟语料/CER/延迟/母语评审债务仍未完成；本节
+仅验证 AI-16 adapter 的长输入稳定性、Release RTF/RSS 与运行时离线边界。
+
+### 实现状态
+
+输入：AI-4 锁定 sherpa-onnx v1.13.2 runtime、14M 中文模型、公开
+`test_wavs/0.wav`（SHA-256
+`668bf8df51a10027b84d5d8816a1ce11ae93545538dc05cfe2aa6811d399c250`）。
+
+输出：
+
+- 修复 bundle path：dylib 从标准 `Contents/Frameworks`、模型从
+  `Contents/Resources/Model` 解析；
+- `package-release-app.sh` 生成含两个 dylib、四个模型文件、runtime/model
+  许可证证据的 arm64 `.app`，并执行 ad-hoc deep sign/strict verify；
+- `AIListenerASRStress` 以 Release 编译，重复公开 WAV 至至少 3,600 秒输入，
+  输出机器可读 duration/elapsed/RTF/RSS/event counts；
+- `verify-release-asr.sh` 在 harness 存活期间以 `lsof` 高频轮询所有 IPv4/IPv6/
+  TCP/UDP socket，非空即 fail closed。
+
+停止条件：任一 bundle 文件缺失、签名失败、ASR 崩溃/错误、RTF > 0.8、
+RSS > 3.5 GB 或观察到任一网络 socket，脚本非零退出。未触发。
+
+### 验证状态
+
+环境：MacBook Pro `Mac17,6`、Apple M5 Max 18 cores、48 GB memory；
+macOS 26.5.2 build 25F84；Xcode 26.6 build 17F113；Swift 6.3.3；arm64；
+Release configuration。
+
+命令：
+
+```sh
+scripts/package-release-app.sh "$PAPERCLIP_RUN_SCRATCH_DIR/dist" \
+  "$PAPERCLIP_RUN_SCRATCH_DIR/package-build"
+scripts/verify-release-asr.sh "$PAPERCLIP_RUN_SCRATCH_DIR/ai16-evidence" 3600
+```
+
+原始结果在 `release-stress.json`、`runtime-model.sha256` 和
+`runtime-connections.txt`：
+
+- processed audio 3,600.1715 秒，18,605 frames；
+- elapsed 31.0992 秒，RTF 0.008638；
+- peak RSS 132,874,240 bytes（约 126.7 MiB，占 48 GB 约 0.26%）；
+- 18,166 partial、310 finalized，进程正常结束；
+- socket 捕获 0 bytes/0 connections；产品 source/package 静态扫描也无
+  URLSession/WebSocket/gRPC/API key 命中；
+- `.app` 58 MB，`codesign --verify --deep --strict` 通过，主可执行 707,904
+  bytes，identifier `com.ailistener.local`，没有新增 entitlement。
+
+该 3,600 秒是**加速处理的长音频输入**，不是 60 分钟墙钟麦克风录音，也不证明
+writer duration 对账、TCC、CER 或三轮 T-07 M-01 gate。它验证 adapter 在长输入
+下的 Release 稳定性、RTF/RSS 和无外联。
+
+### 风险与下一步
+
+AI-16 验收范围内，有界队列/丢帧、partial/finalized 顺序、ASR 故障隔离、本地
+真实模型、Release 长输入性能与无外联证据已齐。产品 app 当前仍是 AI-6 capture
+UI，完整录音保存/ASR/UI composition 属后续主线集成；T-07 仍须完成明确迁入的
+三轮质量与真人验收债务。本增量不请求真人 TCC。
+
 ## 2026-07-30 successful-run handoff verification
 
 ### 规格状态

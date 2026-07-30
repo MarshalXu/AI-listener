@@ -1,0 +1,2 @@
+# Intentionally empty: repeated `lsof -n -P -a -p <pid> -i` sampling observed
+# no IPv4, IPv6, TCP, or UDP socket while the 60-minute-input Release harness ran.
