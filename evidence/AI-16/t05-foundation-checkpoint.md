@@ -129,3 +129,65 @@ Release 或运行时网络捕获，因此不得宣称 T-05 完成。下一 conti
 sherpa v1.13.2 adapter、模型 bundle/rpath 和公开/合成音频 streaming 验证；
 随后执行长时 Release 与无云取证。如需云/私人音频/新增权限、许可证豁免或破坏
 批准契约，停止并升级 Board。
+
+## 2026-07-30 adapter boundary / recovery checkpoint
+
+### 规格状态
+
+Board disposition 已解除 T-05 的阶段性 T-01 gate blocker；完整 60 分钟、三轮
+Release 与母语评审债务仍由 T-07 追踪，当前未宣称通过。本 checkpoint 未修改
+该 disposition，也未把共享 worktree 中尚未提交的规格文件混入 AI-16 commit。
+
+### 实现状态
+
+已核对锁定 sherpa runtime 含：
+
+- `libsherpa-onnx-c-api.dylib`；
+- `libonnxruntime.1.24.4.dylib`；
+- v1.13.2 C API header；
+- 14M 中文 streaming 模型的 encoder/decoder/joiner/tokens。
+
+接入边界收敛为窄 C shim + bundle-relative `dlopen`，避免把开发机
+`evidence/AI-4/...` 绝对路径写入 SwiftPM 或 Release binary。Swift adapter 只实现
+`LocalStreamingASREngine` 所需的 accept/finish/result/endpoint 生命周期；运行库
+缺失、符号缺失、模型初始化失败均转为 ASR branch failure，不影响 writer。
+
+### 验证状态
+
+执行：
+
+```sh
+CLANG_MODULE_CACHE_PATH="$PAPERCLIP_RUN_SCRATCH_DIR/clang-cache" \
+SWIFTPM_MODULECACHE_OVERRIDE="$PAPERCLIP_RUN_SCRATCH_DIR/swift-cache" \
+swift test --disable-sandbox \
+  --scratch-path "$PAPERCLIP_RUN_SCRATCH_DIR/swift-test" \
+  --filter StreamingASRTests
+
+CLANG_MODULE_CACHE_PATH="$PAPERCLIP_RUN_SCRATCH_DIR/clang-release" \
+SWIFTPM_MODULECACHE_OVERRIDE="$PAPERCLIP_RUN_SCRATCH_DIR/swift-release" \
+swift build --disable-sandbox \
+  --scratch-path "$PAPERCLIP_RUN_SCRATCH_DIR/release-build" -c release
+
+rg -n 'URLSession|https?://|WebSocket|grpc|api[_-]?key' Sources Package.swift
+git diff --check
+```
+
+2026-07-30 原始观察：
+
+- `StreamingASRTests` 9/9 通过，1 suite，0.192 秒；
+- Release build 成功，5.31 秒；
+- 产品 source/package 静态无网扫描无命中；
+- `git diff --check` 通过。
+
+首次测试未设置 module cache 时因托管 sandbox 拒绝写入
+`~/.cache/clang/ModuleCache` 而失败；切换到 run-owned cache 后通过。这是已恢复
+的执行环境失败，不是产品失败。
+
+### 风险与下一步
+
+尚未验证且不得宣称完成：真实 sherpa C adapter、公开 WAV 的 partial/final
+输出、dylib/model app bundle、长时 Release RSS/RTF、运行时无网络捕获。下一
+continuation 直接实现 C shim + Swift adapter，用 AI-4 模型归档内公开 WAV 做
+streaming integration test，再验证 bundle/rpath。Paperclip API 本 heartbeat
+返回 `127.0.0.1:3100 connection refused`，因此 checkpoint 先固化在仓库；下次
+API 可用时回填 issue comment。该服务不可达不阻断本地实现。
