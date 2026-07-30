@@ -58,6 +58,7 @@ public final class SherpaStreamingASREngine: LocalStreamingASREngine, @unchecked
     private var revision: Int64 = 0
     private var segmentStartMs: Int64?
     private var lastEndMs: Int64 = 0
+    private var lastFinalEndMs: Int64 = 0
     private var lastText = ""
     private var finished = false
 
@@ -118,6 +119,7 @@ public final class SherpaStreamingASREngine: LocalStreamingASREngine, @unchecked
         let event = makeEvent(text: text, finalized: endpoint)
         lastText = text
         if endpoint {
+            lastFinalEndMs = event.endMs
             al_sherpa_reset(handle)
             segmentSequence += 1
             revision = 0
@@ -146,11 +148,12 @@ public final class SherpaStreamingASREngine: LocalStreamingASREngine, @unchecked
 
     private func makeEvent(text: String, finalized: Bool) -> ASRTranscriptEvent {
         let session = sessionId ?? "unknown"
+        let start = max(lastFinalEndMs, segmentStartMs ?? max(0, lastEndMs - 1))
+        let end = max(lastEndMs, start + 1)
         return ASRTranscriptEvent(
             segmentId: "\(session)-\(segmentSequence)", sessionId: session,
             status: finalized ? .finalized : .partial, sequence: segmentSequence,
-            revision: revision, startMs: segmentStartMs ?? max(0, lastEndMs - 1),
-            endMs: max(lastEndMs, (segmentStartMs ?? 0) + 1), text: text,
+            revision: revision, startMs: start, endMs: end, text: text,
             createdMonotonicMs: Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000),
             engineId: "sherpa-onnx", engineModelVersion: modelVersion
         )

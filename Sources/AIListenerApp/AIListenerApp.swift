@@ -2,6 +2,10 @@ import AIListenerCore
 import AppKit
 import SwiftUI
 
+extension Notification.Name {
+    static let aiListenerSessionDidFinalize = Notification.Name("AIListenerSessionDidFinalize")
+}
+
 @main
 struct AIListenerApp: App {
     @StateObject private var model = CaptureViewModel()
@@ -57,7 +61,10 @@ final class CaptureViewModel: ObservableObject {
                 partialSink: { [weak self] in self?.partials = $0 },
                 finalizedSink: { [weak self] event in self?.finalized.append(event) },
                 diagnosticSink: { [weak self] diagnostic in
-                    Task { @MainActor in self?.pipelineErrorCode = diagnostic.code }
+                    Task { @MainActor in
+                        self?.pipelineErrorCode = [diagnostic.code, diagnostic.underlyingSafeCode]
+                            .compactMap { $0 }.joined(separator: ":")
+                    }
                 }
             )
             self.pipeline = pipeline
@@ -89,7 +96,10 @@ final class CaptureViewModel: ObservableObject {
         guard let coordinator else { return }
         Task {
             await coordinator.stop()
-            do { try pipeline?.finish() }
+            do {
+                try pipeline?.finish()
+                NotificationCenter.default.post(name: .aiListenerSessionDidFinalize, object: nil)
+            }
             catch { pipelineErrorCode = "RECORDING_PIPELINE_FINISH_FAILED" }
             pipeline = nil
             self.coordinator = nil
@@ -97,6 +107,12 @@ final class CaptureViewModel: ObservableObject {
     }
 
     func retry() { start() }
+
+    /// Clears transient on-screen captions without deleting persisted local data.
+    func clearTranscriptDisplay() {
+        partials = []
+        finalized = []
+    }
 
     func openMicrophoneSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else { return }
@@ -125,6 +141,8 @@ struct ContentView: View {
                     .disabled(!model.canStart)
                 Button("停止", action: model.stop)
                     .disabled(!model.canStop)
+                Button("清屏", action: model.clearTranscriptDisplay)
+                    .disabled(model.partials.isEmpty && model.finalized.isEmpty)
                 if model.status.state == .failed {
                     Button("重试", action: model.retry)
                 }

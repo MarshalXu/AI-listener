@@ -123,10 +123,24 @@ public final class RecordingSessionPipeline: @unchecked Sendable {
             do {
                 try await transcript.consume(event)
             } catch {
-                diagnosticSink(ASRDiagnostic(code: "TRANSCRIPT_PERSIST_FAILED", sessionId: sessionId))
+                diagnosticSink(ASRDiagnostic(
+                    code: "TRANSCRIPT_PERSIST_FAILED",
+                    sessionId: sessionId,
+                    underlyingSafeCode: Self.safePersistenceCode(error)
+                ))
             }
             semaphore.signal()
         }
         semaphore.wait()
+    }
+
+    private static func safePersistenceCode(_ error: Error) -> String {
+        guard let storeError = error as? SessionStoreError else {
+            return String(describing: type(of: error))
+        }
+        switch storeError {
+        case .invalidContract(let field): return "invalidContract.\(field)"
+        default: return String(describing: storeError)
+        }
     }
 }

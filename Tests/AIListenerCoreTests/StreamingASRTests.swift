@@ -273,6 +273,49 @@ struct StreamingASRTests {
         #expect(detail.segments.map(\.text) == ["你好世界"])
     }
 
+    @Test func productPipelinePersistsMultipleFinalizedSegmentsInOrder() throws {
+        final class MultipleFinalEngine: LocalStreamingASREngine, @unchecked Sendable {
+            private var nextSequence: Int64 = 0
+
+            func accept(_ frame: ASRInputFrame) throws -> [ASRTranscriptEvent] {
+                let sequence = nextSequence
+                nextSequence += 1
+                return [ASRTranscriptEvent(
+                    segmentId: "\(frame.sessionId)-\(sequence)", sessionId: frame.sessionId,
+                    status: .finalized, sequence: sequence, revision: 1,
+                    startMs: sequence * 100, endMs: sequence * 100 + 100,
+                    text: "文本\(sequence)", createdMonotonicMs: sequence + 1,
+                    engineId: "fixture", engineModelVersion: "multiple-finals"
+                )]
+            }
+
+            func finish() throws -> [ASRTranscriptEvent] { [] }
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "ai-listener-multiple-finals-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let assets = root.appending(path: "Audio")
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        let store = try SessionStore(databaseURL: root.appending(path: "sessions.sqlite"))
+        let sessionId = UUID().uuidString
+        let pipeline = try RecordingSessionPipeline(
+            store: store, assetRoot: assets, engine: MultipleFinalEngine(),
+            sessionId: sessionId, captureStartMonotonicNanoseconds: 1,
+            partialSink: { _ in }, finalizedSink: { _ in }, diagnosticSink: { _ in }
+        )
+
+        try pipeline.consume(AudioFrame(buffer: pcmBuffer(channels: 1), monotonicNanoseconds: 1))
+        try pipeline.consume(AudioFrame(
+            buffer: pcmBuffer(channels: 1), monotonicNanoseconds: 101_000_001
+        ))
+        _ = try pipeline.finish()
+
+        let detail = try #require(try store.playableSession(sessionId: sessionId))
+        #expect(detail.segments.map(\.text) == ["文本0", "文本1"])
+        #expect(try store.listPlayableSessions().contains { $0.sessionId == sessionId })
+    }
+
     @Test func queueIsBoundedAndReportsGapWithoutBlockingProducer() {
         let engine = FixtureEngine(delay: 0.03)
         let diagnostics = LockedValues<ASRDiagnostic>()

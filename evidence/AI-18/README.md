@@ -36,11 +36,17 @@ Release app bundle、逐文件 SHA-256、从零运行说明、M-01～M-10 证据
 音频保存、16 kHz 转换、sherpa streaming ASR、partial/finalized UI 和 finalized
 SQLite 持久化；`ContentView` 新增滚动字幕区域。不得用首轮失败前的包验收本 revision。
 
+第二轮真人验收确认实时中文 partial 正常，但发现连续 finalized 时间范围契约冲突、
+记录页没有在停止后刷新；随后 reviewer 要求主页面提供“清屏”。当前 revision 已将
+sherpa segment 起点钳制到上一 finalized 终点之后，持久化失败会显示安全的具体底层
+错误码；Session finalize 后主动通知记录页刷新且记录页 `onAppear` 再次 reload；
+“清屏”只清 transient UI，不删除 SQLite、Session 或音频。
+
 修复后再次执行 `scripts/package-release-app.sh`：Release build 成功，
 `codesign --verify --deep --strict` 成功，bundle 约 58 MiB。当前 app 可执行文件
-SHA-256 为 `297174105c6182f615d0f1f6d147029b8b49e6a5b80345918f22fe5868a8a386`；
+SHA-256 为 `36afe4e098496588ef686747f874bf32ba873f1fb3a9f35091f86c39b86b364d`；
 逐文件清单本身 SHA-256 为
-`c92fe5e00d2ce9d7a20b1ada3215f3ad5a64af50c8a4aa3f0aac525c064fdd2b`。
+`94722659b1e315e903896137dd4319577bab5b6452e9a65ba9408a95b2348a0a`。
 
 ## 从零构建与恢复
 
@@ -68,7 +74,7 @@ Microphone TCC。拒绝或 restricted 时不得创建空 Session。
 ## 自动验证记录
 
 2026-07-30 修复后 Release 全仓测试以隔离 cache 执行：构建成功；共发现 45 个测试，
-44 个通过。新增
+44 个通过。原有
 `productPipelineWritesAudioRunsASRAndPersistsFinalizedTranscript` 以同一产品
 pipeline 注入单声道合成麦克风帧，验证 CAF 落盘、ASR partial/finalized 路径、
 finalized SQLite 和 ready Session。既有 sherpa 公共中文 WAV 解码测试同轮通过。
@@ -79,6 +85,11 @@ finalized SQLite 和 ready Session。既有 sherpa 公共中文 WAV 解码测试
 `evidence/AI-17/m08-results.tsv`）。本次不把历史成功改写为当前执行成功，也不把
 受管进程的 audio-service 不可用当作产品回归已证实；local-board 应在最终 Demo
 重跑该项。
+
+本 revision 定向执行两个产品 pipeline 测试，2/2 通过；新增
+`productPipelinePersistsMultipleFinalizedSegmentsInOrder` 连续产生两个 finalized，
+验证完整逐字稿和 ready Session 可被记录列表查询。UI 的停止后即时刷新、清屏语义、
+App 重启与真人点击回听仍须由 local-board 按清单复验，不能由该 core 测试替代。
 
 本轮已独立验证 Release app 编译、arm64/14.0 metadata、ad-hoc codesign、
 bundle 文件与模型清单。AI-16 已有一次重复公开 WAV 至 3,600 秒的 Release

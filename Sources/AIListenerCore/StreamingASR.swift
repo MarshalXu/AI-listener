@@ -85,17 +85,20 @@ public struct ASRDiagnostic: Sendable, Equatable {
     public let sessionId: String
     public let firstDroppedSequence: Int64?
     public let lastDroppedSequence: Int64?
+    public let underlyingSafeCode: String?
 
     public init(
         code: String,
         sessionId: String,
         firstDroppedSequence: Int64? = nil,
-        lastDroppedSequence: Int64? = nil
+        lastDroppedSequence: Int64? = nil,
+        underlyingSafeCode: String? = nil
     ) {
         self.code = code
         self.sessionId = sessionId
         self.firstDroppedSequence = firstDroppedSequence
         self.lastDroppedSequence = lastDroppedSequence
+        self.underlyingSafeCode = underlyingSafeCode
     }
 }
 

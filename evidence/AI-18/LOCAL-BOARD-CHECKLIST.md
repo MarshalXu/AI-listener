@@ -5,7 +5,7 @@
 
 本清单必须使用修复首轮空 `frameSink` 缺陷之后的 Release；先核对
 `dist/AIListener.app.sha256` 自身 SHA-256 为
-`c92fe5e00d2ce9d7a20b1ada3215f3ad5a64af50c8a4aa3f0aac525c064fdd2b`。
+`94722659b1e315e903896137dd4319577bab5b6452e9a65ba9408a95b2348a0a`。
 
 ## TCC 与闭环
 
@@ -16,7 +16,11 @@
 - [ ] 授予 Microphone 后重启 app，口述一段非私人中文测试句。
 - [ ] 录音时能看到 partial 更新与 finalized 滚动字幕；ASR 不可用时须明确 degraded，
       但录音仍继续。
-- [ ] 停止后本地音频与 finalized transcript 可见；退出并重开记录仍存在。
+- [ ] 连续产生至少 3 条 finalized，确认无 `TRANSCRIPT_PERSIST_FAILED`；若失败，UI
+      须显示冒号后的具体安全底层错误码。
+- [ ] 点击“清屏”后主页面字幕清空；记录页中的 finalized transcript 和音频仍存在。
+- [ ] 停止后无需手动刷新，“记录”页立即出现本地音频与完整 finalized transcript；
+      退出并重启 App 后仍可打开。
 - [ ] 点击开头/中间/结尾 finalized 时间点各 10 次，保存 30 行 target/actual/error；
       使用批准算法确认 p95 ≤250 ms、max ≤500 ms。
 - [ ] 模型临时不可用的恢复演示不得删除已有 Session 或音频。

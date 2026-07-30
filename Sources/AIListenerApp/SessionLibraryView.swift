@@ -135,6 +135,10 @@ struct SessionLibraryView: View {
             .font(.caption)
             .padding(8)
         }
+        .onAppear(perform: model.reload)
+        .onReceive(NotificationCenter.default.publisher(for: .aiListenerSessionDidFinalize)) { _ in
+            model.reload()
+        }
     }
 
     private func timestamp(_ milliseconds: Int64) -> String {
