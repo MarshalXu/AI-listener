@@ -249,3 +249,54 @@ codesign/rpath/从 bundle 启动；随后用公开或合成 60 分钟流执行 R
 RSS/RTF、队列/文件 duration 对账与运行时无连接取证。该工作仍属 AI-16 live
 continuation，不需要 Board 普通工程决策；只有许可证不兼容、新权限、云/私人
 数据或门槛/范围变化才升级。
+
+## 2026-07-30 successful-run handoff verification
+
+### 规格状态
+
+继续按批准的 SDD-r3（aggregate
+`7711eca19ef7c255a729adad4c48f97ac3b94639356f1a5a9d07723c49e5863e`）
+实施；无范围、权限或云边界变化。T-07 承接的 60 分钟三轮 Release 性能与母语
+评审债务仍未完成，本次复核不将其表述为通过。
+
+### 实现状态
+
+AI-16 独立实现链为 `2139c29`、`257b451`、`f1f0dea`、`580a07f`；本次未修改
+产品代码。共享 worktree 中两份 SDD disposition 修改与 `evidence/AI-12/` 残留
+不属于 AI-16，未混入本次 handoff。
+
+### 验证状态
+
+```sh
+CLANG_MODULE_CACHE_PATH="$PAPERCLIP_RUN_SCRATCH_DIR/clang" \
+SWIFTPM_MODULECACHE_OVERRIDE="$PAPERCLIP_RUN_SCRATCH_DIR/swift" \
+swift test --disable-sandbox \
+  --scratch-path "$PAPERCLIP_RUN_SCRATCH_DIR/test" \
+  --filter StreamingASRTests
+
+CLANG_MODULE_CACHE_PATH="$PAPERCLIP_RUN_SCRATCH_DIR/clang-release" \
+SWIFTPM_MODULECACHE_OVERRIDE="$PAPERCLIP_RUN_SCRATCH_DIR/swift-release" \
+swift build --disable-sandbox \
+  --scratch-path "$PAPERCLIP_RUN_SCRATCH_DIR/release" -c release
+
+rg -n 'URLSession|https?://|WebSocket|grpc|api[_-]?key' Sources Package.swift
+git diff --check
+```
+
+2026-07-30 原始观察：`StreamingASRTests` 11/11、1 suite、0.449 秒通过；
+公开 WAV 真实 sherpa 解码 0.262 秒；Release build 成功（5.73 秒）；产品
+source/package 静态无网扫描无命中；`git diff --check` 通过。静态扫描不替代
+运行时网络捕获。
+
+### 风险与下一步
+
+尚未验证：两个 runtime dylib 与四个模型文件进入 Release `.app` 后的
+bundle-relative 启动/codesign；公开或合成 60 分钟 Release RSS/RTF、队列/音频
+duration 对账与运行时无连接取证。live continuation owner 为 Founding macOS
+Engineer；下一 heartbeat 先实现可复现 app bundle resource packaging 与 bundle
+启动测试，再执行长时 Release harness/取证。无一等 blocker，AI-16 应保持
+`in_progress`，不得标为 done 或 in_review。
+
+本次尝试通过 Paperclip API 回填 comment/status 时，
+`127.0.0.1:3100` 返回 connection refused；仓库 checkpoint 是本次 durable
+handoff，API 恢复后应补写同内容。服务不可达不阻断本地实现。
