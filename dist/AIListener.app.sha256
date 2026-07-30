@@ -1,0 +1,12 @@
+d747c8e7249ef69ed5cdfb9c83c17506d42e6cf40ea66012f4678860a0b84d63  dist/AIListener.app/Contents/Frameworks/libonnxruntime.1.24.4.dylib
+1bd4571f059d5e0a7399bfb8dde35aee385cab025029c54cdfacca90cb817423  dist/AIListener.app/Contents/Frameworks/libsherpa-onnx-c-api.dylib
+9bba512c40f07fe7e1a187cf07a653236a4c9b2a568cde23b7c06d0dcb5d4754  dist/AIListener.app/Contents/Info.plist
+e4d06db9b3d5e64c64f073a045f8fe4eca34aefe9ed7190c2ac3ff460f099942  dist/AIListener.app/Contents/MacOS/AIListenerApp
+515751f07faad368f0863ae41773ff09635eba5920122d549abb8e45d5c88282  dist/AIListener.app/Contents/Resources/Licenses/model-README.md
+d1967a12097b05e90e547579548b76b38f9b82145288f38221e6e049f581d4c0  dist/AIListener.app/Contents/Resources/Licenses/sbom.spdx.json
+cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30  dist/AIListener.app/Contents/Resources/Licenses/sherpa-onnx-LICENSE
+5ee0f03a2768ff1d5c83ef3a493243c7935d316cd41280037b14783a3467cc78  dist/AIListener.app/Contents/Resources/Model/decoder-epoch-99-avg-1.onnx
+1c556ea57cec304e55ec4b72e52c1cc098bb01476ed7d90f3de939fe126487b1  dist/AIListener.app/Contents/Resources/Model/encoder-epoch-99-avg-1.int8.onnx
+a7cf9d82757bdcf786059454495a9ca95e4bd7347f72473fc08d794475c36169  dist/AIListener.app/Contents/Resources/Model/joiner-epoch-99-avg-1.int8.onnx
+8b294db9045d6e5f94647f4c1eec1af4da143a75053c399611444b378ff966ac  dist/AIListener.app/Contents/Resources/Model/tokens.txt
+e86e7b48325e683f8a4a33552137e4cf309910b2b51d7afc396f3b1cf97d788a  dist/AIListener.app/Contents/_CodeSignature/CodeResources

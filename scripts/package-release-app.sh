@@ -9,6 +9,10 @@ runtime="$repository/evidence/AI-4/runtime/sherpa-onnx-v1.13.2-osx-arm64-shared-
 model="$repository/evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23"
 
 swift build --disable-sandbox --scratch-path "$scratch" -c release --product AIListenerApp
+if test -e "$app"; then
+  # Never allow files from an older bundle to leak into release evidence.
+  find "$app" -depth -delete
+fi
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" \
   "$app/Contents/Resources/Model" "$app/Contents/Resources/Licenses"
 cp "$scratch/release/AIListenerApp" "$app/Contents/MacOS/AIListenerApp"
@@ -22,6 +26,8 @@ cp "$model/tokens.txt" "$app/Contents/Resources/Model/"
 cp "$repository/evidence/AI-4/runtime/sherpa-onnx/LICENSE" \
   "$app/Contents/Resources/Licenses/sherpa-onnx-LICENSE"
 cp "$model/README.md" "$app/Contents/Resources/Licenses/model-README.md"
+cp "$repository/evidence/AI-9/t01/sbom.spdx.json" \
+  "$app/Contents/Resources/Licenses/sbom.spdx.json"
 
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
