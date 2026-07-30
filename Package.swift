@@ -11,8 +11,12 @@ let package = Package(
     targets: [
         .systemLibrary(name: "CSQLite"),
         .target(
+            name: "CSherpaShim",
+            linkerSettings: [.linkedLibrary("dl")]
+        ),
+        .target(
             name: "AIListenerCore",
-            dependencies: ["CSQLite"]
+            dependencies: ["CSQLite", "CSherpaShim"]
         ),
         .executableTarget(
             name: "AIListenerApp",

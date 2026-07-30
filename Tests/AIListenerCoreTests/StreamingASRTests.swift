@@ -5,6 +5,69 @@ import Testing
 
 @Suite(.serialized)
 struct StreamingASRTests {
+    @Test func sherpaAdapterRejectsMissingRuntimeBeforeLoadingModel() {
+        let root = URL(fileURLWithPath: "/definitely-missing-ai-listener-runtime")
+        #expect(throws: SherpaStreamingASRError.missingFile("library")) {
+            _ = try SherpaStreamingASREngine(
+                paths: SherpaModelPaths(
+                    library: root.appending(path: "libsherpa.dylib"),
+                    encoder: root.appending(path: "encoder.onnx"),
+                    decoder: root.appending(path: "decoder.onnx"),
+                    joiner: root.appending(path: "joiner.onnx"),
+                    tokens: root.appending(path: "tokens.txt")
+                ),
+                modelVersion: "fixture"
+            )
+        }
+    }
+
+    @Test func sherpaAdapterDecodesApprovedPublicFixture() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let runtime = repository.appending(
+            path: "evidence/AI-4/runtime/sherpa-onnx-v1.13.2-osx-arm64-shared-no-tts/lib"
+        )
+        let model = repository.appending(
+            path: "evidence/AI-4/models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23"
+        )
+        let engine = try SherpaStreamingASREngine(
+            paths: SherpaModelPaths(
+                library: runtime.appending(path: "libsherpa-onnx-c-api.dylib"),
+                encoder: model.appending(path: "encoder-epoch-99-avg-1.int8.onnx"),
+                decoder: model.appending(path: "decoder-epoch-99-avg-1.onnx"),
+                joiner: model.appending(path: "joiner-epoch-99-avg-1.int8.onnx"),
+                tokens: model.appending(path: "tokens.txt")
+            ),
+            modelVersion: "zh-14M-2023-02-23"
+        )
+        let audio = try AVAudioFile(forReading: model.appending(path: "test_wavs/0.wav"))
+        let format = audio.processingFormat
+        let chunkFrames: AVAudioFrameCount = 3_200
+        var events: [ASRTranscriptEvent] = []
+        var sequence: Int64 = 0
+        var startMs: Int64 = 0
+        while audio.framePosition < audio.length {
+            let remaining = AVAudioFrameCount(audio.length - audio.framePosition)
+            let count = min(chunkFrames, remaining)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: count)!
+            try audio.read(into: buffer, frameCount: count)
+            let samples = Array(UnsafeBufferPointer(
+                start: buffer.floatChannelData![0], count: Int(buffer.frameLength)
+            ))
+            let duration = Int64(Double(samples.count) / format.sampleRate * 1_000)
+            events += try engine.accept(ASRInputFrame(
+                sessionId: "public-fixture", sequence: sequence, startMs: startMs,
+                durationMs: duration, sampleRate: Int(format.sampleRate), samples: samples
+            ))
+            sequence += 1
+            startMs += duration
+        }
+        events += try engine.finish()
+        #expect(events.contains { !$0.text.isEmpty })
+        #expect(events.contains { $0.status == .finalized })
+        #expect(events.allSatisfy { $0.engineId == "sherpa-onnx" })
+    }
+
     final class FixtureEngine: LocalStreamingASREngine, @unchecked Sendable {
         let delay: TimeInterval
         let failAt: Int64?

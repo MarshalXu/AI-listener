@@ -191,3 +191,61 @@ continuation 直接实现 C shim + Swift adapter，用 AI-4 模型归档内公�
 streaming integration test，再验证 bundle/rpath。Paperclip API 本 heartbeat
 返回 `127.0.0.1:3100 connection refused`，因此 checkpoint 先固化在仓库；下次
 API 可用时回填 issue comment。该服务不可达不阻断本地实现。
+
+## 2026-07-30 sherpa streaming adapter increment
+
+### 规格状态
+
+输入仍为批准的 SDD-r3 与 AI-4 锁定 sherpa-onnx v1.13.2/14M 中文模型；未改
+产品范围、系统权限或云边界。T-07 承接的 60 分钟三轮 Release 性能与母语评审
+债务仍未完成，本增量不宣称替代该 gate。
+
+### 实现状态
+
+输出：
+
+- `CSherpaShim` 通过 `dlopen`/`dlsym` 加载 bundle-relative runtime，不在
+  executable 直接链接 sherpa symbols；
+- `SherpaStreamingASREngine` 实现 `LocalStreamingASREngine`，固定 CPU、
+  16 kHz、greedy search 与 endpoint，产出 revisioned partial 和 finalized；
+- runtime/model/symbol/stream 失败成为 typed ASR error，继续沿既有
+  `BoundedASRQueue` 隔离，不反压或停止 writer；
+- adapter 没有网络 API、云 fallback 或新增 entitlement。
+
+停止条件：缺任一锁定文件、ABI symbol 或模型初始化失败即停止 ASR 分支并返回
+错误；不得尝试网络下载或云识别。
+
+### 验证状态
+
+输入为 AI-4 模型包公开 `test_wavs/0.wav`，并明确移除
+`DYLD_LIBRARY_PATH`，验证不是开发 shell 注入路径才能运行。
+
+```sh
+env -u DYLD_LIBRARY_PATH \
+  CLANG_MODULE_CACHE_PATH="$PAPERCLIP_RUN_SCRATCH_DIR/clang" \
+  SWIFTPM_MODULECACHE_OVERRIDE="$PAPERCLIP_RUN_SCRATCH_DIR/swift" \
+  swift test --disable-sandbox \
+    --scratch-path "$PAPERCLIP_RUN_SCRATCH_DIR/build-noenv" \
+    --filter StreamingASRTests
+
+CLANG_MODULE_CACHE_PATH="$PAPERCLIP_RUN_SCRATCH_DIR/clang-release" \
+  SWIFTPM_MODULECACHE_OVERRIDE="$PAPERCLIP_RUN_SCRATCH_DIR/swift-release" \
+  swift build --disable-sandbox \
+    --scratch-path "$PAPERCLIP_RUN_SCRATCH_DIR/release" -c release
+
+rg -n 'URLSession|https?://|WebSocket|grpc|api[_-]?key' Sources Package.swift
+git diff --check
+```
+
+原始结果：`StreamingASRTests` 11/11、1 suite、0.359 秒通过；其中真实公开 WAV
+解码 0.238 秒并产生非空事件与 finalized。Release build 成功（5.86 秒）。
+产品 source/package 无网络 token 命中；`git diff --check` 通过。上述验证证明
+adapter 最小真实闭环，不证明长时 Release RSS/RTF 或最终 app bundle 已完成。
+
+### 风险与下一步
+
+真实剩余：将两个 runtime dylib 与四个模型文件复制进 Release `.app`，验证
+codesign/rpath/从 bundle 启动；随后用公开或合成 60 分钟流执行 Release
+RSS/RTF、队列/文件 duration 对账与运行时无连接取证。该工作仍属 AI-16 live
+continuation，不需要 Board 普通工程决策；只有许可证不兼容、新权限、云/私人
+数据或门槛/范围变化才升级。
