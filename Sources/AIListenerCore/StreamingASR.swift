@@ -1,4 +1,14 @@
+@preconcurrency import AVFoundation
 import Foundation
+
+private final class ASRConverterInput: @unchecked Sendable {
+    let buffer: AVAudioPCMBuffer
+    var supplied = false
+
+    init(_ buffer: AVAudioPCMBuffer) {
+        self.buffer = buffer
+    }
+}
 
 public struct ASRInputFrame: Sendable, Equatable {
     public let sessionId: String
@@ -102,6 +112,124 @@ public struct ASRQueueMetrics: Sendable, Equatable {
     public let droppedFrames: Int64
     public let maximumDepth: Int
     public let degraded: Bool
+}
+
+public enum ASRFrameConversionError: Error, Sendable, Equatable {
+    case unsupportedFormat
+    case conversionFailed
+}
+
+/// Converts capture buffers to the locked engine input format without retaining
+/// AVAudioPCMBuffer across the asynchronous ASR boundary.
+public struct ASRFrameConverter: Sendable {
+    public let outputSampleRate: Double
+
+    public init(outputSampleRate: Double = 16_000) {
+        precondition(outputSampleRate > 0)
+        self.outputSampleRate = outputSampleRate
+    }
+
+    public func convert(
+        _ frame: AudioFrame,
+        sessionId: String,
+        sequence: Int64,
+        captureStartMonotonicNanoseconds: UInt64
+    ) throws -> ASRInputFrame {
+        let buffer = frame.buffer
+        guard buffer.frameLength > 0, buffer.format.channelCount > 0,
+              let outputFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: outputSampleRate,
+                channels: 1,
+                interleaved: false
+              ),
+              let converter = AVAudioConverter(from: buffer.format, to: outputFormat) else {
+            throw ASRFrameConversionError.unsupportedFormat
+        }
+
+        let ratio = outputSampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * ratio)) + 1
+        guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else {
+            throw ASRFrameConversionError.conversionFailed
+        }
+        let input = ASRConverterInput(buffer)
+        var conversionError: NSError?
+        let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+            if input.supplied {
+                inputStatus.pointee = .endOfStream
+                return nil
+            }
+            input.supplied = true
+            inputStatus.pointee = .haveData
+            return input.buffer
+        }
+        guard conversionError == nil, status != .error,
+              let channel = output.floatChannelData else {
+            throw ASRFrameConversionError.conversionFailed
+        }
+
+        let sampleCount = Int(output.frameLength)
+        let samples = Array(UnsafeBufferPointer(start: channel[0], count: sampleCount))
+        let delta = frame.monotonicNanoseconds >= captureStartMonotonicNanoseconds
+            ? frame.monotonicNanoseconds - captureStartMonotonicNanoseconds : 0
+        let startMs = Int64(delta / 1_000_000)
+        let durationMs = Int64((Double(sampleCount) / outputSampleRate * 1_000).rounded())
+        return ASRInputFrame(
+            sessionId: sessionId, sequence: sequence, startMs: startMs,
+            durationMs: durationMs, sampleRate: Int(outputSampleRate), samples: samples
+        )
+    }
+}
+
+/// Synchronous capture-path fan-out. Audio persistence always happens first;
+/// conversion/queue failures degrade only the ASR branch.
+public final class WriterFirstAudioFanout: @unchecked Sendable {
+    public typealias WriterSink = @Sendable (AVAudioPCMBuffer) throws -> Void
+    public typealias DiagnosticSink = @Sendable (ASRDiagnostic) -> Void
+
+    private let sessionId: String
+    private let captureStartMonotonicNanoseconds: UInt64
+    private let writerSink: WriterSink
+    private let converter: ASRFrameConverter
+    private let queue: BoundedASRQueue
+    private let diagnosticSink: DiagnosticSink
+    private let lock = NSLock()
+    private var sequence: Int64 = 0
+
+    public init(
+        sessionId: String,
+        captureStartMonotonicNanoseconds: UInt64,
+        writerSink: @escaping WriterSink,
+        converter: ASRFrameConverter = ASRFrameConverter(),
+        queue: BoundedASRQueue,
+        diagnosticSink: @escaping DiagnosticSink
+    ) {
+        self.sessionId = sessionId
+        self.captureStartMonotonicNanoseconds = captureStartMonotonicNanoseconds
+        self.writerSink = writerSink
+        self.converter = converter
+        self.queue = queue
+        self.diagnosticSink = diagnosticSink
+    }
+
+    /// A writer error is returned to the recording coordinator. ASR errors are
+    /// isolated and reported as diagnostics after the durable write succeeds.
+    public func consume(_ frame: AudioFrame) throws {
+        try writerSink(frame.buffer)
+        lock.lock()
+        let currentSequence = sequence
+        sequence += 1
+        lock.unlock()
+        do {
+            let input = try converter.convert(
+                frame, sessionId: sessionId, sequence: currentSequence,
+                captureStartMonotonicNanoseconds: captureStartMonotonicNanoseconds
+            )
+            _ = queue.offer(input)
+        } catch {
+            diagnosticSink(ASRDiagnostic(code: "ASR_INPUT_CONVERSION_FAILED", sessionId: sessionId))
+        }
+    }
 }
 
 /// Non-blocking, bounded ASR branch. The writer remains on the capture path and

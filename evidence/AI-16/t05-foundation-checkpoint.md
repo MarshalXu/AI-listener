@@ -93,3 +93,39 @@ Test run with 6 tests in 1 suite passed after 0.147 seconds.
 停止条件：如果缺失 sequence 永不抵达，pending final 只保留至本次 Session
 Coordinator 生命周期结束，不猜测缺失文本；finish/deadline 的最终降级与产品
 状态接线仍属于后续 T-05 工作。
+
+## 2026-07-30 writer-first fan-out checkpoint
+
+输入：Board 写入 SDD-r3 的 2026-07-30 disposition，允许 sherpa-onnx 候选以
+阶段性 T-01 gate 进入 T-05；另复用 AI-6 `AudioFrame`、AI-15
+`AtomicAudioAssetWriter.write` 和本文件前述 `BoundedASRQueue`。
+
+输出：
+
+- `ASRFrameConverter` 将 capture buffer 复制/转换为 ASR branch 自有的
+  16 kHz mono Float32 samples，并由 capture monotonic clock 计算时间；
+- `WriterFirstAudioFanout` 同步先 writer，成功后才 conversion 和非阻塞 ASR
+  offer；writer failure 原样上抛且 ASR `acceptedFrames=0`；
+- ASR conversion/queue/engine failure 只产生 diagnostic/degraded，不反向阻塞
+  或终止后续 writer 调用。
+
+验收证据：
+
+```text
+CLANG_MODULE_CACHE_PATH="$PAPERCLIP_RUN_SCRATCH_DIR/clang-cache" \
+SWIFTPM_CUSTOM_CACHE_PATH="$PAPERCLIP_RUN_SCRATCH_DIR/swift-cache" \
+swift test --filter StreamingASRTests
+
+StreamingASRTests: 9 tests passed, 0 failed, 2026-07-30
+```
+
+新增三项合成 buffer 测试分别证明 48 kHz stereo → 16 kHz mono、writer
+failure 时不进入 ASR，以及注入 engine failure 后 writer 仍收到第二帧。首次托管
+沙箱内执行因 SwiftPM 内部 `sandbox-exec` 被拒绝；获批在系统沙箱外使用
+run-owned cache 后通过。这是执行环境限制，不是产品失败。
+
+停止条件与剩余：此 checkpoint 未接 sherpa C API/dylib、未跑真实模型、长时
+Release 或运行时网络捕获，因此不得宣称 T-05 完成。下一 continuation 是
+sherpa v1.13.2 adapter、模型 bundle/rpath 和公开/合成音频 streaming 验证；
+随后执行长时 Release 与无云取证。如需云/私人音频/新增权限、许可证豁免或破坏
+批准契约，停止并升级 Board。

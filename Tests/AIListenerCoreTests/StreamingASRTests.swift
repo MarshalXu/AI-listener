@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import AIListenerCore
@@ -40,6 +41,87 @@ struct StreamingASRTests {
             sessionId: sessionId, sequence: sequence, startMs: sequence * 10,
             durationMs: 10, sampleRate: 16_000, samples: [0]
         )
+    }
+
+    private func pcmBuffer(
+        sampleRate: Double = 48_000, channels: AVAudioChannelCount = 2,
+        frames: AVAudioFrameCount = 480
+    ) -> AVAudioPCMBuffer {
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: sampleRate,
+            channels: channels, interleaved: false
+        )!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
+        buffer.frameLength = frames
+        for channel in 0..<Int(channels) {
+            for index in 0..<Int(frames) {
+                buffer.floatChannelData![channel][index] = Float(channel + 1) * 0.1
+            }
+        }
+        return buffer
+    }
+
+    @Test func frameConverterProducesOwned16kMonoSamplesAndMonotonicTiming() throws {
+        let input = pcmBuffer()
+        let converted = try ASRFrameConverter().convert(
+            AudioFrame(buffer: input, monotonicNanoseconds: 1_010_000_000),
+            sessionId: "session", sequence: 7,
+            captureStartMonotonicNanoseconds: 1_000_000_000
+        )
+
+        #expect(converted.sampleRate == 16_000)
+        #expect(converted.samples.count == 160)
+        #expect(converted.startMs == 10)
+        #expect(converted.durationMs == 10)
+        #expect(converted.sequence == 7)
+    }
+
+    @Test func fanoutWritesBeforeOfferingASRAndWriterFailureStopsFanout() throws {
+        enum WriterFailure: Error { case injected }
+        let engine = FixtureEngine()
+        let queue = BoundedASRQueue(
+            capacity: 2, engine: engine, eventSink: { _ in }, diagnosticSink: { _ in }
+        )
+        let writes = LockedValues<String>()
+        let fanout = WriterFirstAudioFanout(
+            sessionId: "session", captureStartMonotonicNanoseconds: 0,
+            writerSink: { _ in
+                writes.append("write")
+                throw WriterFailure.injected
+            },
+            queue: queue, diagnosticSink: { _ in }
+        )
+
+        #expect(throws: WriterFailure.self) {
+            try fanout.consume(AudioFrame(buffer: pcmBuffer(), monotonicNanoseconds: 1))
+        }
+        #expect(queue.finish(deadline: Date().addingTimeInterval(1)))
+        #expect(writes.values == ["write"])
+        #expect(engine.sequences.isEmpty)
+        #expect(queue.metrics().acceptedFrames == 0)
+    }
+
+    @Test func fanoutKeepsWritingWhenASREngineFails() throws {
+        let engine = FixtureEngine(failAt: 0)
+        let diagnostics = LockedValues<ASRDiagnostic>()
+        let queue = BoundedASRQueue(
+            capacity: 2, engine: engine, eventSink: { _ in },
+            diagnosticSink: { diagnostics.append($0) }
+        )
+        let writes = LockedValues<Int>()
+        let fanout = WriterFirstAudioFanout(
+            sessionId: "session", captureStartMonotonicNanoseconds: 0,
+            writerSink: { _ in writes.append(1) }, queue: queue,
+            diagnosticSink: { diagnostics.append($0) }
+        )
+
+        try fanout.consume(AudioFrame(buffer: pcmBuffer(), monotonicNanoseconds: 1))
+        Thread.sleep(forTimeInterval: 0.02)
+        try fanout.consume(AudioFrame(buffer: pcmBuffer(), monotonicNanoseconds: 2))
+        #expect(queue.finish(deadline: Date().addingTimeInterval(1)))
+        #expect(writes.values.count == 2)
+        #expect(queue.metrics().degraded)
+        #expect(diagnostics.values.contains { $0.code == "ASR_ENGINE_FAILED" })
     }
 
     @Test func queueIsBoundedAndReportsGapWithoutBlockingProducer() {
