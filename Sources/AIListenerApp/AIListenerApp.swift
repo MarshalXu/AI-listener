@@ -30,8 +30,17 @@ final class CaptureViewModel: ObservableObject {
     @Published private(set) var partials: [ASRTranscriptEvent] = []
     @Published private(set) var finalized: [ASRTranscriptEvent] = []
     @Published private(set) var pipelineErrorCode: String?
+
+    public let eventBus = TranscriptEventBus()
+    public let subtitleController: SubtitleWindowController
+
     private var coordinator: CaptureCoordinator?
     private var pipeline: RecordingSessionPipeline?
+
+    init() {
+        self.subtitleController = SubtitleWindowController()
+        self.subtitleController.connectBus(eventBus)
+    }
 
     var isRecording: Bool { status.state == .recording }
     var canStart: Bool { status.state == .idle || status.state == .failed }
@@ -58,6 +67,7 @@ final class CaptureViewModel: ObservableObject {
             pipelineErrorCode = nil
             let pipeline = try RecordingSessionPipeline(
                 store: store, assetRoot: assets, engine: engine,
+                eventBus: eventBus,
                 partialSink: { [weak self] in self?.partials = $0 },
                 finalizedSink: { [weak self] event in self?.finalized.append(event) },
                 diagnosticSink: { [weak self] diagnostic in
@@ -112,6 +122,7 @@ final class CaptureViewModel: ObservableObject {
     func clearTranscriptDisplay() {
         partials = []
         finalized = []
+        eventBus.publishReset(sessionId: "current")
     }
 
     func openMicrophoneSettings() {
@@ -136,13 +147,16 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            HStack {
+            HStack(spacing: 12) {
                 Button("开始录音", action: model.start)
                     .disabled(!model.canStart)
                 Button("停止", action: model.stop)
                     .disabled(!model.canStop)
                 Button("清屏", action: model.clearTranscriptDisplay)
                     .disabled(model.partials.isEmpty && model.finalized.isEmpty)
+                Button(action: model.subtitleController.toggleWindow) {
+                    Label("字幕浮窗", systemImage: "captions.bubble")
+                }
                 if model.status.state == .failed {
                     Button("重试", action: model.retry)
                 }

@@ -16,6 +16,7 @@ public final class RecordingSessionPipeline: @unchecked Sendable {
     public typealias DiagnosticSink = @Sendable (ASRDiagnostic) -> Void
 
     public let sessionId: String
+    public let eventBus: TranscriptEventBus?
     private let store: SessionStore
     private let session: SessionRecord
     private let writer: AtomicAudioAssetWriter
@@ -29,8 +30,14 @@ public final class RecordingSessionPipeline: @unchecked Sendable {
     private lazy var transcript = TranscriptEventCoordinator(
         sessionId: sessionId,
         store: store,
-        partialSink: partialSink,
-        finalizedSink: finalizedSink,
+        partialSink: { [weak self] partials in
+            self?.partialSink(partials)
+            self?.eventBus?.publishPartials(partials)
+        },
+        finalizedSink: { [weak self] event in
+            self?.finalizedSink(event)
+            self?.eventBus?.publishFinalized(event)
+        },
         diagnosticSink: diagnosticSink
     )
     private lazy var queue = BoundedASRQueue(
@@ -54,11 +61,13 @@ public final class RecordingSessionPipeline: @unchecked Sendable {
         sessionId: String = UUID().uuidString,
         createdAtUtc: Int64 = Int64(Date().timeIntervalSince1970 * 1_000),
         captureStartMonotonicNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds,
-        partialSink: @escaping PartialSink,
-        finalizedSink: @escaping FinalizedSink,
-        diagnosticSink: @escaping DiagnosticSink
+        eventBus: TranscriptEventBus? = nil,
+        partialSink: @escaping PartialSink = { _ in },
+        finalizedSink: @escaping FinalizedSink = { _ in },
+        diagnosticSink: @escaping DiagnosticSink = { _ in }
     ) throws {
         self.sessionId = sessionId
+        self.eventBus = eventBus
         self.store = store
         self.engine = engine
         self.partialSink = partialSink
