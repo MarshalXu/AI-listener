@@ -15,7 +15,7 @@ public enum AIMode: String, Codable, Sendable, CaseIterable {
 }
 
 public enum AIModel: String, Codable, Sendable, CaseIterable {
-    case gemini = "gemini-1.5-flash"
+    case gemini = "gemini-flash-latest"
     case localMock = "local-mock"
 
     public var displayName: String {
