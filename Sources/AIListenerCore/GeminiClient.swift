@@ -50,6 +50,10 @@ public final class GeminiClient: GeminiClientProtocol, @unchecked Sendable {
                         ["text": prompt]
                     ]
                 ]
+            ],
+            "generationConfig": [
+                "responseMimeType": "application/json",
+                "temperature": 0.2
             ]
         ]
 
@@ -199,16 +203,44 @@ public final class GeminiClient: GeminiClientProtocol, @unchecked Sendable {
         }
     }
 
+    /// Cleans a candidate text that may wrap JSON inside a fenced code block or
+    /// surround it with prose. The order of operations:
+    ///   1. Strip a fenced code block (``` … ```), with or without a language
+    ///      tag, but only when both opening and closing fences are present so we
+    ///      don't damage content that merely contains stray backticks.
+    ///   2. As a fallback, extract the substring between the first `{` and the
+    ///      last `}` so prose-wrapped JSON is still recoverable.
     private func cleanJsonString(_ text: String) -> String {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("```json") {
-            trimmed.removeFirst(7)
-        } else if trimmed.hasPrefix("```") {
-            trimmed.removeFirst(3)
+
+        // Fenced code block: requires both an opening and a closing fence.
+        if let openingRange = trimmed.range(of: "```"),
+           let closingRange = trimmed.range(of: "```", range: openingRange.upperBound..<trimmed.endIndex) {
+            // Content starts right after the opening fence; skip an optional
+            // language tag (e.g. "json") up to the end of that line.
+            var contentStart = openingRange.upperBound
+            // Advance past an optional language tag on the same line as ```.
+            let restOfLine = trimmed[contentStart...]
+            let newlineIdx = restOfLine.firstIndex { $0.isWhitespace && $0.isNewline } ?? restOfLine.endIndex
+            let tagCandidate = String(trimmed[contentStart..<newlineIdx]).trimmingCharacters(in: .whitespaces)
+            if !tagCandidate.isEmpty {
+                // Looks like a language tag; skip it and the newline.
+                contentStart = newlineIdx
+            }
+            trimmed = String(trimmed[contentStart..<closingRange.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if trimmed.hasSuffix("```") {
-            trimmed.removeLast(3)
+
+        // Fallback: extract the first `{` … last `}` slice. This rescues JSON
+        // that a model wrapped in explanatory prose even without fences.
+        if !trimmed.hasPrefix("{") || !trimmed.hasSuffix("}") {
+            if let firstBrace = trimmed.firstIndex(of: "{"),
+               let lastBrace = trimmed.lastIndex(of: "}"),
+               firstBrace <= lastBrace {
+                trimmed = String(trimmed[firstBrace...lastBrace])
+            }
         }
+
         return trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

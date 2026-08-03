@@ -100,6 +100,24 @@ final class SessionLibraryViewModel: ObservableObject {
         Task {
             let settings = PrivacySettingsStore.shared.loadSettings()
             let apiKey = try? KeychainManager.shared.getApiKey()
+            let hasKey = apiKey != nil && !apiKey!.isEmpty
+
+            // Pre-flight: surface configuration problems before any network call.
+            if settings.aiMode == .off {
+                await MainActor.run { self.errorCode = "MINUTES_AI_MODE_OFF" }
+                return
+            }
+            if settings.aiModel != .localMock {
+                if !settings.cloudConsentGranted {
+                    await MainActor.run { self.errorCode = "MINUTES_CLOUD_CONSENT_MISSING" }
+                    return
+                }
+                if !hasKey {
+                    await MainActor.run { self.errorCode = "MINUTES_API_KEY_MISSING" }
+                    return
+                }
+            }
+
             let client: GeminiClientProtocol = settings.aiModel == .localMock ? MockGeminiClient() : GeminiClient()
 
             do {
@@ -111,11 +129,59 @@ final class SessionLibraryViewModel: ObservableObject {
                     apiKey: apiKey
                 )
                 try store?.saveMeetingMinutes(generated)
-                self.minutes = generated
-                self.errorCode = nil
+                await MainActor.run {
+                    self.minutes = generated
+                    self.errorCode = nil
+                }
+            } catch let error as GeminiClientError {
+                await MainActor.run { self.errorCode = Self.errorCode(for: error) }
             } catch {
-                self.errorCode = "MINUTES_GENERATE_FAILED"
+                await MainActor.run { self.errorCode = "MINUTES_NETWORK_ERROR" }
             }
+        }
+    }
+
+    /// Maps a `GeminiClientError` to a granular, user-actionable error code.
+    private static func errorCode(for error: GeminiClientError) -> String {
+        switch error {
+        case .missingApiKey:
+            return "MINUTES_API_KEY_MISSING"
+        case .invalidResponse(let statusCode, _):
+            switch statusCode {
+            case 400...499:
+                return "MINUTES_API_KEY_INVALID_OR_QUOTA"
+            default:
+                return "MINUTES_GEMINI_SERVER_ERROR"
+            }
+        case .invalidJsonPayload:
+            return "MINUTES_RESPONSE_PARSE_FAILED"
+        case .networkError:
+            return "MINUTES_NETWORK_ERROR"
+        }
+    }
+
+    /// Human-readable guidance shown beneath an error code.
+    static func guidance(for code: String?) -> String? {
+        guard let code else { return nil }
+        switch code {
+        case "MINUTES_API_KEY_MISSING":
+            return "请前往「AI 纪要与隐私设置」保存 Gemini API Key 后重试。"
+        case "MINUTES_CLOUD_CONSENT_MISSING":
+            return "请在「AI 纪要与隐私设置」中勾选允许逐字稿上传至云端后重试。"
+        case "MINUTES_AI_MODE_OFF":
+            return "AI 模式已关闭，请在「AI 纪要与隐私设置」中开启后重试。"
+        case "MINUTES_API_KEY_INVALID_OR_QUOTA":
+            return "Gemini 返回客户端错误，请检查 API Key 是否有效、是否超配额。"
+        case "MINUTES_GEMINI_SERVER_ERROR":
+            return "Gemini 服务端暂时不可用，请稍后重试。"
+        case "MINUTES_NETWORK_ERROR":
+            return "网络连接失败，请检查网络后重试。"
+        case "MINUTES_RESPONSE_PARSE_FAILED":
+            return "Gemini 返回内容无法解析为纪要，请重试或更换模型。"
+        case "MINUTES_GENERATE_FAILED":
+            return "纪要生成失败，请重试。"
+        default:
+            return nil
         }
     }
 }
@@ -205,6 +271,11 @@ struct SessionLibraryView: View {
                 }
                 if let code = model.errorCode {
                     Text("错误码：\(code)").foregroundStyle(.red)
+                    if let guidance = SessionLibraryViewModel.guidance(for: code) {
+                        Text(guidance)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
                 }
             }
             .font(.caption)

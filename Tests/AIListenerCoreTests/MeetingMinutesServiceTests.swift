@@ -104,4 +104,69 @@ struct MeetingMinutesServiceTests {
         let result = await service.finishSession(sessionId: sessionId)
         #expect(result == nil)
     }
+
+    // MARK: - Degradation reasons when the configuration is incomplete
+
+    private func serviceWith(
+        settings: PrivacySettings,
+        keychainManager: KeychainManager = KeychainManager(serviceName: "ai.listener.test.\(UUID().uuidString)")
+    ) -> MeetingMinutesService {
+        let defaults = UserDefaults(suiteName: "ServiceTest_\(UUID().uuidString)")!
+        let privacyStore = PrivacySettingsStore(userDefaults: defaults)
+        privacyStore.saveSettings(settings)
+        return MeetingMinutesService(
+            client: MockGeminiClient(),
+            privacySettingsStore: privacyStore,
+            keychainManager: keychainManager
+        )
+    }
+
+    @Test func degradedReasonWhenAiModeOff() async {
+        let service = serviceWith(settings: PrivacySettings(aiMode: .off, aiModel: .localMock))
+        let sessionId = UUID().uuidString
+        await service.startSession(sessionId: sessionId)
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 1, startMs: 1000))
+
+        let status = await service.status
+        #expect(status == .degraded(reason: "AI 已关闭：请在设置中开启 AI 模式以生成纪要。"))
+    }
+
+    @Test func degradedReasonWhenCloudConsentMissing() async {
+        let service = serviceWith(settings: PrivacySettings(
+            aiMode: .incrementalAndPost, aiModel: .gemini, cloudConsentGranted: false
+        ))
+        let sessionId = UUID().uuidString
+        await service.startSession(sessionId: sessionId)
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 1, startMs: 1000))
+
+        let reason = await service.status.degradationReason ?? ""
+        #expect(reason.contains("未授权云端处理"))
+    }
+
+    @Test func degradedReasonWhenApiKeyMissing() async {
+        let service = serviceWith(settings: PrivacySettings(
+            aiMode: .incrementalAndPost, aiModel: .gemini, cloudConsentGranted: true
+        ))
+        // No API key stored in the keychain for this test actor, so
+        // KeychainManager.shared.getApiKey() will fail and hasKey == false.
+        let sessionId = UUID().uuidString
+        await service.startSession(sessionId: sessionId)
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 1, startMs: 1000))
+
+        let reason = await service.status.degradationReason ?? ""
+        #expect(reason.contains("API Key"))
+    }
+
+    @Test func finishSessionReturnsNilWithDegradedReasonWhenUnconfigured() async {
+        let service = serviceWith(settings: PrivacySettings(aiMode: .off, aiModel: .localMock))
+        let sessionId = UUID().uuidString
+        await service.startSession(sessionId: sessionId)
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 1, startMs: 1000))
+
+        let result = await service.finishSession(sessionId: sessionId)
+        #expect(result == nil)
+
+        let reason = await service.status.degradationReason ?? ""
+        #expect(reason.contains("AI 已关闭"))
+    }
 }
