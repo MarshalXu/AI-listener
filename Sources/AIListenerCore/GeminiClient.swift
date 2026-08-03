@@ -21,7 +21,7 @@ public final class GeminiClient: GeminiClientProtocol, @unchecked Sendable {
     private let session: URLSession
     private let modelName: String
 
-    public init(session: URLSession = .shared, modelName: String = "gemini-1.5-flash") {
+    public init(session: URLSession = .shared, modelName: String = "gemini-flash-latest") {
         self.session = session
         self.modelName = modelName
     }

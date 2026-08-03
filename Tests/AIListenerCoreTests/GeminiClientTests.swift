@@ -155,7 +155,7 @@ struct GeminiClientTests {
     }
 
     private func client(session: URLSession = .shared) -> GeminiClient {
-        GeminiClient(session: session, modelName: "gemini-1.5-flash")
+        GeminiClient(session: session, modelName: "gemini-flash-latest")
     }
 
     // MARK: Mock client
@@ -265,7 +265,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientNetworkErrorIsPropagated() async {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=test-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=test-key")!
         StubURLProtocol.stub(url: url) { _ in
             throw URLError(.notConnectedToInternet)
         }
@@ -290,7 +290,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientInvalidHttpResponseThrows() async {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=bad-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=bad-key")!
         StubURLProtocol.stub(url: url) { _ in
             (401, "API key not valid".data(using: .utf8)!)
         }
@@ -305,7 +305,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientQuotaErrorThrows429() async {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=quota-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=quota-key")!
         StubURLProtocol.stub(url: url) { _ in
             (429, "quota exceeded".data(using: .utf8)!)
         }
@@ -322,7 +322,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientParsesCleanJsonResponse() async throws {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=clean-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=clean-key")!
         StubURLProtocol.stub(url: url) { _ in
             (200, geminiEnvelope(text: validMinutesJSON))
         }
@@ -341,7 +341,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientParsesJsonWrappedInMarkdownCodeFence() async throws {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=fence-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=fence-key")!
         let wrapped = "```json\n\(validMinutesJSON)\n```"
         StubURLProtocol.stub(url: url) { _ in
             (200, geminiEnvelope(text: wrapped))
@@ -357,7 +357,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientParsesJsonWithSurroundingProse() async throws {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=prose-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=prose-key")!
         let prose = "好的，这是你要的纪要：\n\(validMinutesJSON)\n以上为结构化纪要，请查阅。"
         StubURLProtocol.stub(url: url) { _ in
             (200, geminiEnvelope(text: prose))
@@ -373,7 +373,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientNonJsonCandidateTextThrowsInvalidJsonPayload() async {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=nonjson-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=nonjson-key")!
         StubURLProtocol.stub(url: url) { _ in
             (200, geminiEnvelope(text: "这不是 JSON，只是普通文本。"))
         }
@@ -388,7 +388,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientMissingCandidatesFieldThrowsInvalidJsonPayload() async {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=nocand-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=nocand-key")!
         // Safety filter blocked the prompt → empty candidates.
         let body = "{\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}"
         StubURLProtocol.stub(url: url) { _ in
@@ -405,7 +405,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientMalformedGeminiEnvelopeThrowsInvalidJsonPayload() async {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=malformed-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=malformed-key")!
         StubURLProtocol.stub(url: url) { _ in
             (200, "{not valid json".data(using: .utf8)!)
         }
@@ -420,7 +420,7 @@ struct GeminiClientTests {
 
     @Test func geminiClientIncompleteMinutesPayloadThrowsInvalidJsonPayload() async {
         defer { StubURLProtocol.reset() }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=incomplete-key")!
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=incomplete-key")!
         // Missing actionItems / unresolvedQuestions / timestampReferences.
         let partial = """
         {
