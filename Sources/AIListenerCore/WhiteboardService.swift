@@ -204,8 +204,14 @@ public final class WhiteboardService: @unchecked Sendable {
     public func generateSnapshot(sessionId: String) -> WhiteboardSnapshot {
         lock.withLock {
             let encoder = JSONEncoder()
-            let elementsData = (try? encoder.encode(_nodes)) ?? Data()
-            let elementsStr = String(data: elementsData, encoding: .utf8) ?? "[]"
+
+            // Persist both nodes and connections so the recorded whiteboard
+            // round-trips faithfully (AC2.2). We store them together as a
+            // single JSON object so the existing single `elements_json` column
+            // carries the full structural state without a schema migration.
+            let payload = SnapshotElements(nodes: _nodes, connections: _connections)
+            let elementsData = (try? encoder.encode(payload)) ?? Data()
+            let elementsStr = String(data: elementsData, encoding: .utf8) ?? "{\"nodes\":[],\"connections\":[]}"
 
             return WhiteboardSnapshot(
                 sessionId: sessionId,
@@ -219,12 +225,27 @@ public final class WhiteboardService: @unchecked Sendable {
         lock.withLock {
             let decoder = JSONDecoder()
             if let data = snapshot.elementsJSON.data(using: .utf8),
-               let loadedNodes = try? decoder.decode([WhiteboardNode].self, from: data) {
-                _nodes = loadedNodes.map { WhiteboardSanitizer.sanitizeNode($0) }
+               let payload = try? decoder.decode(SnapshotElements.self, from: data) {
+                _nodes = payload.nodes.map { WhiteboardSanitizer.sanitizeNode($0) }
+                _connections = payload.connections
+            } else if let data = snapshot.elementsJSON.data(using: .utf8),
+                      // Backward compatibility: decode a legacy nodes-only array.
+                      let legacyNodes = try? decoder.decode([WhiteboardNode].self, from: data) {
+                _nodes = legacyNodes.map { WhiteboardSanitizer.sanitizeNode($0) }
+                _connections.removeAll()
+            } else {
+                _nodes.removeAll()
+                _connections.removeAll()
             }
-            _connections.removeAll()
             undoStack.removeAll()
             redoStack.removeAll()
         }
+    }
+
+    /// Intermediate payload used to persist both nodes and connections in the
+    /// single `elementsJSON` field of a `WhiteboardSnapshot`.
+    private struct SnapshotElements: Codable {
+        let nodes: [WhiteboardNode]
+        let connections: [WhiteboardConnection]
     }
 }

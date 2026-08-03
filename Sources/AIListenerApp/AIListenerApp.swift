@@ -156,9 +156,26 @@ final class CaptureViewModel: ObservableObject {
                     await MainActor.run {
                         self.activeMinutes = finalMinutes
                     }
+                    // Flush any batched finalized text before snapshotting so the
+                    // last utterances are not lost (AC2.1). flushBatcher() hands
+                    // the pending items to handleFinalizedText on a detached Task,
+                    // so yield briefly to let that drain before generating.
+                    self.whiteboardService.flushBatcher()
+                    // Give the batcher's flush callback a moment to enqueue its
+                    // processing Task. It is bounded and non-blocking.
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+
+                    let snapshot = self.whiteboardService.generateSnapshot(sessionId: sessionId)
                     if let store = try? SessionStore(databaseURL: FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appending(path: "AIListener/sessions.sqlite")) {
-                        let snapshot = self.whiteboardService.generateSnapshot(sessionId: sessionId)
-                        try? store.saveWhiteboardSnapshot(snapshot)
+                        do {
+                            try store.saveWhiteboardSnapshot(snapshot)
+                        } catch {
+                            // Surface persistence failures instead of silently
+                            // swallowing them with try? (AC2.3).
+                            await MainActor.run {
+                                self.pipelineErrorCode = "WHITEBOARD_SNAPSHOT_SAVE_FAILED:\(error.localizedDescription)"
+                            }
+                        }
                     }
                 }
                 NotificationCenter.default.post(name: .aiListenerSessionDidFinalize, object: nil)
