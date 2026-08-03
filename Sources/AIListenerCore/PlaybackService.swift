@@ -89,6 +89,20 @@ public final class PlaybackService {
     }
 
     @discardableResult
+    public func play(atMs: Int64) throws -> PlaybackPosition {
+        guard let driver else {
+            throw PlaybackServiceError.playerUnavailable
+        }
+        let targetMs = max(0, min(atMs, detail?.asset.durationMs ?? atMs))
+        driver.currentTime = TimeInterval(targetMs) / 1_000
+        guard driver.play() else { throw PlaybackServiceError.playerUnavailable }
+        return PlaybackPosition(
+            requestedMs: targetMs,
+            actualMs: Int64((driver.currentTime * 1_000).rounded())
+        )
+    }
+
+    @discardableResult
     public func play(segment: TranscriptSegmentRecord) throws -> PlaybackPosition {
         guard segment.status == "finalized",
               segment.sessionId == detail?.session.sessionId,

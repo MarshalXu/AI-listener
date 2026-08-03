@@ -107,6 +107,34 @@ public struct TranscriptSegmentRecord: Sendable, Equatable {
     public let createdMonotonicMs: Int64
     public let engineId: String
     public let engineModelVersion: String
+
+    public init(
+        segmentId: String,
+        sessionId: String,
+        revisionOf: String? = nil,
+        status: String,
+        sequence: Int64,
+        revision: Int64 = 0,
+        startMs: Int64,
+        endMs: Int64,
+        text: String,
+        createdMonotonicMs: Int64,
+        engineId: String,
+        engineModelVersion: String
+    ) {
+        self.segmentId = segmentId
+        self.sessionId = sessionId
+        self.revisionOf = revisionOf
+        self.status = status
+        self.sequence = sequence
+        self.revision = revision
+        self.startMs = startMs
+        self.endMs = endMs
+        self.text = text
+        self.createdMonotonicMs = createdMonotonicMs
+        self.engineId = engineId
+        self.engineModelVersion = engineModelVersion
+    }
 }
 
 public struct RecordingEventRecord: Sendable, Equatable {
@@ -132,8 +160,8 @@ public struct ErrorRecord: Sendable, Equatable {
     public let underlyingSafeCode: String?
 }
 
-public final class SessionStore {
-    public static let schemaVersion = 2
+public final class SessionStore: @unchecked Sendable {
+    public static let schemaVersion = 4
     private var database: OpaquePointer?
 
     public init(databaseURL: URL, failMigrationAtVersion: Int? = nil) throws {
@@ -623,8 +651,148 @@ public final class SessionStore {
         }
     }
 
+    public func saveMeetingMinutes(_ minutes: MeetingMinutes) throws {
+        guard UUID(uuidString: minutes.minutesId) != nil,
+              UUID(uuidString: minutes.sessionId) != nil else {
+            throw SessionStoreError.invalidContract("meetingMinutesId")
+        }
+
+        let encoder = JSONEncoder()
+        guard let jsonString = String(data: try encoder.encode(minutes), encoding: .utf8) else {
+            throw SessionStoreError.invalidContract("jsonEncoding")
+        }
+
+        try transaction {
+            try execute(
+                """
+                INSERT OR REPLACE INTO meeting_minutes (
+                  contract_version, minutes_id, session_id, minutes_kind, style,
+                  summary_json, created_at_utc, updated_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    .text(SessionRecord.contractVersion), .text(minutes.minutesId),
+                    .text(minutes.sessionId), .text(minutes.kind.rawValue),
+                    .text(minutes.style.rawValue), .text(jsonString),
+                    .integer(minutes.createdAtUtc), .integer(minutes.updatedAtUtc)
+                ]
+            )
+        }
+    }
+
+    public func fetchMeetingMinutes(sessionId: String, kind: MeetingMinutes.MinutesKind? = nil) throws -> MeetingMinutes? {
+        guard UUID(uuidString: sessionId) != nil else {
+            throw SessionStoreError.invalidContract("sessionId")
+        }
+
+        let sql: String
+        let bindings: [Binding]
+        if let kind = kind {
+            sql = "SELECT summary_json FROM meeting_minutes WHERE session_id = ? AND minutes_kind = ? ORDER BY updated_at_utc DESC LIMIT 1"
+            bindings = [.text(sessionId), .text(kind.rawValue)]
+        } else {
+            sql = "SELECT summary_json FROM meeting_minutes WHERE session_id = ? ORDER BY updated_at_utc DESC LIMIT 1"
+            bindings = [.text(sessionId)]
+        }
+
+        guard let jsonString = try scalarText(sql, bindings),
+              let jsonData = jsonString.data(using: .utf8) else {
+            return nil
+        }
+
+        return try JSONDecoder().decode(MeetingMinutes.self, from: jsonData)
+    }
+
+    public func deleteMeetingMinutes(sessionId: String) throws {
+        guard UUID(uuidString: sessionId) != nil else {
+            throw SessionStoreError.invalidContract("sessionId")
+        }
+
+        try transaction {
+            try execute("DELETE FROM meeting_minutes WHERE session_id = ?", [.text(sessionId)])
+        }
+    }
+
+    public func saveWhiteboardSnapshot(_ snapshot: WhiteboardSnapshot) throws {
+        guard UUID(uuidString: snapshot.sessionId) != nil else {
+            throw SessionStoreError.invalidContract("sessionId")
+        }
+
+        try transaction {
+            try execute(
+                """
+                INSERT OR REPLACE INTO whiteboard_snapshots (
+                  contract_version, snapshot_id, session_id, elements_json,
+                  app_state_json, created_at_utc, updated_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    .text(SessionRecord.contractVersion), .text(snapshot.snapshotId),
+                    .text(snapshot.sessionId), .text(snapshot.elementsJSON),
+                    .text(snapshot.appStateJSON), .integer(snapshot.createdAtUTC),
+                    .integer(snapshot.updatedAtUTC)
+                ]
+            )
+        }
+    }
+
+    public func fetchWhiteboardSnapshot(sessionId: String) throws -> WhiteboardSnapshot? {
+        guard UUID(uuidString: sessionId) != nil else {
+            throw SessionStoreError.invalidContract("sessionId")
+        }
+
+        let sql = """
+            SELECT snapshot_id, session_id, elements_json, app_state_json, created_at_utc, updated_at_utc
+            FROM whiteboard_snapshots
+            WHERE session_id = ?
+            ORDER BY updated_at_utc DESC LIMIT 1
+            """
+
+        guard let database else {
+            throw SessionStoreError.sqlite(code: SQLITE_MISUSE, message: "closed")
+        }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionStoreError.sqlite(code: sqlite3_errcode(database), message: String(cString: sqlite3_errmsg(database)))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, (sessionId as NSString).utf8String, -1, nil)
+
+        if sqlite3_step(statement) == SQLITE_ROW {
+            let snapshotId = String(cString: sqlite3_column_text(statement, 0))
+            let sessId = String(cString: sqlite3_column_text(statement, 1))
+            let elementsJSON = String(cString: sqlite3_column_text(statement, 2))
+            let appStateJSON = String(cString: sqlite3_column_text(statement, 3))
+            let createdAtUTC = sqlite3_column_int64(statement, 4)
+            let updatedAtUTC = sqlite3_column_int64(statement, 5)
+
+            return WhiteboardSnapshot(
+                snapshotId: snapshotId,
+                sessionId: sessId,
+                elementsJSON: elementsJSON,
+                appStateJSON: appStateJSON,
+                createdAtUTC: createdAtUTC,
+                updatedAtUTC: updatedAtUTC
+            )
+        }
+
+        return nil
+    }
+
+    public func deleteWhiteboardSnapshot(sessionId: String) throws {
+        guard UUID(uuidString: sessionId) != nil else {
+            throw SessionStoreError.invalidContract("sessionId")
+        }
+
+        try transaction {
+            try execute("DELETE FROM whiteboard_snapshots WHERE session_id = ?", [.text(sessionId)])
+        }
+    }
+
     public func count(in table: String) throws -> Int {
-        let allowed = ["sessions", "audio_assets", "transcript_segments", "recording_events", "errors"]
+        let allowed = ["sessions", "audio_assets", "transcript_segments", "recording_events", "errors", "meeting_minutes", "whiteboard_snapshots"]
         guard allowed.contains(table) else { throw SessionStoreError.invalidContract("table") }
         return try scalarInt("SELECT COUNT(*) FROM \(table)")
     }
@@ -660,7 +828,15 @@ public final class SessionStore {
                     if failAtVersion == version {
                         throw SessionStoreError.migrationFailed(version: version)
                     }
-                    try execute(version == 1 ? Self.schemaV1 : Self.schemaV2)
+                    if version == 1 {
+                        try execute(Self.schemaV1)
+                    } else if version == 2 {
+                        try execute(Self.schemaV2)
+                    } else if version == 3 {
+                        try execute(Self.schemaV3)
+                    } else if version == 4 {
+                        try execute(Self.schemaV4)
+                    }
                     try execute("PRAGMA user_version = \(version)")
                 }
             } catch {
@@ -975,5 +1151,32 @@ public final class SessionStore {
     );
     CREATE INDEX events_order ON recording_events(session_id, sequence);
     CREATE INDEX errors_session ON errors(session_id, occurred_monotonic_ms);
+    """
+
+    private static let schemaV3 = """
+    CREATE TABLE meeting_minutes (
+      contract_version TEXT NOT NULL CHECK(contract_version = 'ai-listener.contracts/1.0'),
+      minutes_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+      minutes_kind TEXT NOT NULL CHECK(minutes_kind IN ('incremental', 'post_session')),
+      style TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      created_at_utc INTEGER NOT NULL,
+      updated_at_utc INTEGER NOT NULL
+    );
+    CREATE INDEX minutes_session_kind ON meeting_minutes(session_id, minutes_kind);
+    """
+
+    private static let schemaV4 = """
+    CREATE TABLE whiteboard_snapshots (
+      contract_version TEXT NOT NULL CHECK(contract_version = 'ai-listener.contracts/1.0'),
+      snapshot_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+      elements_json TEXT NOT NULL,
+      app_state_json TEXT NOT NULL,
+      created_at_utc INTEGER NOT NULL,
+      updated_at_utc INTEGER NOT NULL
+    );
+    CREATE INDEX idx_whiteboard_snapshots_session ON whiteboard_snapshots(session_id);
     """
 }

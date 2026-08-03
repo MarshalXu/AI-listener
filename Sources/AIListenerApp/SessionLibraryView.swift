@@ -6,8 +6,11 @@ import SwiftUI
 final class SessionLibraryViewModel: ObservableObject {
     @Published private(set) var sessions: [SessionListItem] = []
     @Published private(set) var detail: SessionDetail?
+    @Published private(set) var minutes: MeetingMinutes?
     @Published private(set) var playbackPosition: PlaybackPosition?
     @Published private(set) var errorCode: String?
+    @Published private(set) var whiteboardSnapshot: WhiteboardSnapshot?
+    @Published var selectedTab: Int = 0 // 0: Transcript, 1: Meeting Minutes, 2: AI Whiteboard
     @Published var selection: String? {
         didSet {
             guard selection != oldValue, let selection else { return }
@@ -17,6 +20,8 @@ final class SessionLibraryViewModel: ObservableObject {
 
     private var store: SessionStore?
     private var playback: PlaybackService?
+    private let minutesService = MeetingMinutesService()
+    public let whiteboardService = WhiteboardService()
 
     init() {
         do {
@@ -42,6 +47,7 @@ final class SessionLibraryViewModel: ObservableObject {
             if let selection, !sessions.contains(where: { $0.sessionId == selection }) {
                 self.selection = nil
                 detail = nil
+                minutes = nil
             }
         } catch {
             errorCode = "LIBRARY_READ_FAILED"
@@ -51,6 +57,13 @@ final class SessionLibraryViewModel: ObservableObject {
     func open(sessionId: String) {
         do {
             detail = try playback?.open(sessionId: sessionId)
+            minutes = try store?.fetchMeetingMinutes(sessionId: sessionId)
+            whiteboardSnapshot = try store?.fetchWhiteboardSnapshot(sessionId: sessionId)
+            if let snapshot = whiteboardSnapshot {
+                whiteboardService.loadSnapshot(snapshot)
+            } else {
+                whiteboardService.clear()
+            }
             playbackPosition = nil
             errorCode = nil
         } catch PlaybackServiceError.assetMissing {
@@ -70,6 +83,39 @@ final class SessionLibraryViewModel: ObservableObject {
             errorCode = nil
         } catch {
             errorCode = "PLAYBACK_SEEK_FAILED"
+        }
+    }
+
+    func play(atMs: Int64) {
+        do {
+            playbackPosition = try playback?.play(atMs: atMs)
+            errorCode = nil
+        } catch {
+            errorCode = "PLAYBACK_SEEK_FAILED"
+        }
+    }
+
+    func generateMinutes() {
+        guard let detail = detail else { return }
+        Task {
+            let settings = PrivacySettingsStore.shared.loadSettings()
+            let apiKey = try? KeychainManager.shared.getApiKey()
+            let client: GeminiClientProtocol = settings.aiModel == .localMock ? MockGeminiClient() : GeminiClient()
+
+            do {
+                let generated = try await client.generateMinutes(
+                    sessionId: detail.session.sessionId,
+                    segments: detail.segments,
+                    kind: .postSession,
+                    style: settings.minutesStyle,
+                    apiKey: apiKey
+                )
+                try store?.saveMeetingMinutes(generated)
+                self.minutes = generated
+                self.errorCode = nil
+            } catch {
+                self.errorCode = "MINUTES_GENERATE_FAILED"
+            }
         }
     }
 }
@@ -102,23 +148,52 @@ struct SessionLibraryView: View {
             }
         } detail: {
             if let detail = model.detail {
-                List(detail.segments, id: \.segmentId) { segment in
-                    Button {
-                        model.play(segment)
-                    } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            Text(timestamp(segment.startMs))
-                                .font(.body.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            Text(segment.text)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            Image(systemName: "play.fill")
-                        }
+                VStack(spacing: 0) {
+                    Picker("", selection: $model.selectedTab) {
+                        Text("逐字稿").tag(0)
+                        Text("会议纪要").tag(1)
+                        Text("AI 画板").tag(2)
                     }
-                    .buttonStyle(.plain)
+                    .pickerStyle(.segmented)
+                    .padding()
+
+                    if model.selectedTab == 0 {
+                        List(detail.segments, id: \.segmentId) { segment in
+                            Button {
+                                model.play(segment)
+                            } label: {
+                                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                    Text(timestamp(segment.startMs))
+                                        .font(.body.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                    Text(segment.text)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Image(systemName: "play.fill")
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } else if model.selectedTab == 1 {
+                        if let minutes = model.minutes {
+                            MeetingMinutesView(minutes: minutes) { atMs in
+                                model.play(atMs: atMs)
+                            }
+                        } else {
+                            VStack(spacing: 16) {
+                                ContentUnavailableView("尚无会议纪要", systemImage: "doc.text")
+                                Button("生成会议纪要") {
+                                    model.generateMinutes()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            .padding()
+                        }
+                    } else {
+                        WhiteboardView(whiteboardService: model.whiteboardService)
+                    }
                 }
-                .navigationTitle("逐字稿")
+                .navigationTitle("会话详情")
             } else {
                 ContentUnavailableView("选择一条记录", systemImage: "text.bubble")
             }
@@ -147,6 +222,6 @@ struct SessionLibraryView: View {
     }
 
     private func duration(_ milliseconds: Int64) -> String {
-        String(format: "%lld:%02lld", milliseconds / 60_000, (milliseconds / 1_000) % 60)
+        String(format: "%02lld:%02lld", milliseconds / 60_000, (milliseconds / 1_000) % 60)
     }
 }

@@ -9,16 +9,20 @@ extension Notification.Name {
 @main
 struct AIListenerApp: App {
     @StateObject private var model = CaptureViewModel()
+    @State private var showingAISettings = false
 
     var body: some Scene {
         WindowGroup {
             TabView {
-                ContentView(model: model)
+                ContentView(model: model, showingAISettings: $showingAISettings)
                     .tabItem { Label("录音", systemImage: "mic") }
                 SessionLibraryView()
                     .tabItem { Label("记录", systemImage: "list.bullet") }
             }
-            .frame(minWidth: 680, minHeight: 480)
+            .frame(minWidth: 720, minHeight: 520)
+            .sheet(isPresented: $showingAISettings) {
+                AISettingsView()
+            }
         }
     }
 }
@@ -30,16 +34,21 @@ final class CaptureViewModel: ObservableObject {
     @Published private(set) var partials: [ASRTranscriptEvent] = []
     @Published private(set) var finalized: [ASRTranscriptEvent] = []
     @Published private(set) var pipelineErrorCode: String?
+    @Published private(set) var activeMinutes: MeetingMinutes?
 
     public let eventBus = TranscriptEventBus()
     public let subtitleController: SubtitleWindowController
+    public let minutesService = MeetingMinutesService()
+    public let whiteboardService = WhiteboardService()
 
     private var coordinator: CaptureCoordinator?
     private var pipeline: RecordingSessionPipeline?
+    private var currentSessionId: String?
 
     init() {
         self.subtitleController = SubtitleWindowController()
         self.subtitleController.connectBus(eventBus)
+        self.whiteboardService.subscribeToBus(eventBus)
     }
 
     var isRecording: Bool { status.state == .recording }
@@ -64,12 +73,45 @@ final class CaptureViewModel: ObservableObject {
             )
             partials = []
             finalized = []
+            activeMinutes = nil
             pipelineErrorCode = nil
+            whiteboardService.clear()
+
+            let sessionId = UUID().uuidString
+            self.currentSessionId = sessionId
+            Task {
+                await minutesService.startSession(sessionId: sessionId)
+            }
+
             let pipeline = try RecordingSessionPipeline(
                 store: store, assetRoot: assets, engine: engine,
                 eventBus: eventBus,
                 partialSink: { [weak self] in self?.partials = $0 },
-                finalizedSink: { [weak self] event in self?.finalized.append(event) },
+                finalizedSink: { [weak self] event in
+                    self?.finalized.append(event)
+                    let record = TranscriptSegmentRecord(
+                        segmentId: event.segmentId,
+                        sessionId: sessionId,
+                        revisionOf: nil,
+                        status: "finalized",
+                        sequence: event.sequence,
+                        revision: 0,
+                        startMs: event.startMs,
+                        endMs: event.endMs,
+                        text: event.text,
+                        createdMonotonicMs: Int64(Date().timeIntervalSince1970 * 1000),
+                        engineId: "sherpa-onnx",
+                        engineModelVersion: "zh-14M"
+                    )
+                    Task {
+                        await self?.minutesService.handleFinalizedSegment(record)
+                        if let updated = await self?.minutesService.latestMinutes {
+                            await MainActor.run {
+                                self?.activeMinutes = updated
+                            }
+                        }
+                    }
+                },
                 diagnosticSink: { [weak self] diagnostic in
                     Task { @MainActor in
                         self?.pipelineErrorCode = [diagnostic.code, diagnostic.underlyingSafeCode]
@@ -104,24 +146,36 @@ final class CaptureViewModel: ObservableObject {
 
     func stop() {
         guard let coordinator else { return }
+        let sessionId = self.currentSessionId
         Task {
             await coordinator.stop()
             do {
                 try pipeline?.finish()
+                if let sessionId {
+                    let finalMinutes = await minutesService.finishSession(sessionId: sessionId)
+                    await MainActor.run {
+                        self.activeMinutes = finalMinutes
+                    }
+                    if let store = try? SessionStore(databaseURL: FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appending(path: "AIListener/sessions.sqlite")) {
+                        let snapshot = self.whiteboardService.generateSnapshot(sessionId: sessionId)
+                        try? store.saveWhiteboardSnapshot(snapshot)
+                    }
+                }
                 NotificationCenter.default.post(name: .aiListenerSessionDidFinalize, object: nil)
             }
             catch { pipelineErrorCode = "RECORDING_PIPELINE_FINISH_FAILED" }
             pipeline = nil
             self.coordinator = nil
+            self.currentSessionId = nil
         }
     }
 
     func retry() { start() }
 
-    /// Clears transient on-screen captions without deleting persisted local data.
     func clearTranscriptDisplay() {
         partials = []
         finalized = []
+        activeMinutes = nil
         eventBus.publishReset(sessionId: "current")
     }
 
@@ -133,9 +187,17 @@ final class CaptureViewModel: ObservableObject {
 
 struct ContentView: View {
     @ObservedObject var model: CaptureViewModel
+    @Binding var showingAISettings: Bool
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
+            HStack {
+                Spacer()
+                Button(action: { showingAISettings = true }) {
+                    Label("AI 纪要与隐私设置", systemImage: "gearshape")
+                }
+            }
+
             HStack(spacing: 10) {
                 Circle()
                     .fill(model.isRecording ? .red : .secondary)
@@ -166,6 +228,27 @@ struct ContentView: View {
                 Button("打开麦克风隐私设置", action: model.openMicrophoneSettings)
             }
 
+            if let minutes = model.activeMinutes {
+                GroupBox(label: Label("实时增量纪要", systemImage: "sparkles")) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(minutes.overview.generalSummary)
+                            .font(.subheadline)
+                        if let firstTopic = minutes.topics.first {
+                            Text("议题：\(firstTopic.title)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(4)
+                }
+            }
+
+            GroupBox(label: Label("实时 AI 画板", systemImage: "paintpalette")) {
+                WhiteboardView(whiteboardService: model.whiteboardService)
+                    .frame(height: 220)
+            }
+
             List {
                 ForEach(model.finalized, id: \.segmentId) { event in
                     HStack(alignment: .firstTextBaseline) {
@@ -191,7 +274,7 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(32)
+        .padding(24)
     }
 
     private var label: String {

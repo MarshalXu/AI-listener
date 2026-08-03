@@ -48,22 +48,25 @@ struct SessionStoreTests {
 
     @Test func freshInstallAndIdempotentReopen() throws {
         let (url, store) = try isolatedDatabase()
-        #expect(try store.userVersion() == 2)
+        #expect(try store.userVersion() == SessionStore.schemaVersion)
         #expect(try store.count(in: "sessions") == 0)
-        for index in ["finalized_sequence", "transcript_order", "events_order", "errors_session"] {
+        #expect(try store.count(in: "meeting_minutes") == 0)
+        #expect(try store.count(in: "whiteboard_snapshots") == 0)
+        for index in ["finalized_sequence", "transcript_order", "events_order", "errors_session", "minutes_session_kind", "idx_whiteboard_snapshots_session"] {
             #expect(try store.schemaObjectExists(named: index, type: "index"))
         }
         let reopened = try SessionStore(databaseURL: url)
-        #expect(try reopened.userVersion() == 2)
+        #expect(try reopened.userVersion() == SessionStore.schemaVersion)
     }
 
     @Test func upgradesV1FixtureWithoutLosingData() throws {
         let url = try databaseURL()
         try createV1Fixture(at: url)
         let store = try SessionStore(databaseURL: url)
-        #expect(try store.userVersion() == 2)
+        #expect(try store.userVersion() == SessionStore.schemaVersion)
         #expect(try store.count(in: "sessions") == 1)
         #expect(try store.count(in: "audio_assets") == 0)
+        #expect(try store.count(in: "meeting_minutes") == 0)
         #expect(FileManager.default.fileExists(
             atPath: url.appendingPathExtension("pre-migration-v1.backup").path
         ))
@@ -80,7 +83,7 @@ struct SessionStoreTests {
         #expect(sqlite3_exec(database, "SELECT * FROM audio_assets", nil, nil, nil) != SQLITE_OK)
         sqlite3_close(database)
         let recovered = try SessionStore(databaseURL: url)
-        #expect(try recovered.userVersion() == 2)
+        #expect(try recovered.userVersion() == SessionStore.schemaVersion)
         #expect(try recovered.count(in: "sessions") == 1)
     }
 
@@ -226,5 +229,41 @@ struct SessionStoreTests {
         try store.insertError(error)
         #expect(try store.count(in: "errors") == 1)
         #expect(url.path.contains("/.test-artifacts/"))
+    }
+
+    @Test func meetingMinutesPersistenceAndCRUD() throws {
+        let (_, store) = try isolatedDatabase()
+        let sessionId = UUID().uuidString
+        try store.insertSession(session(id: sessionId))
+
+        let minutes = MeetingMinutes(
+            sessionId: sessionId,
+            kind: .postSession,
+            style: .standard,
+            overview: MeetingOverview(
+                title: "Test Meeting",
+                durationMs: 60000,
+                participantSummary: "Alice & Bob",
+                generalSummary: "A productive discussion."
+            ),
+            coreSummary: ["Core summary 1"],
+            topics: [MinutesTopic(title: "Topic 1", summary: "Summary 1", keyPoints: ["Key 1"])],
+            decisions: ["Decision 1"],
+            actionItems: [ActionItem(task: "Task 1", assignee: "Alice", dueDate: "Tomorrow", timestampMs: 1000)],
+            unresolvedQuestions: ["Question 1"],
+            timestampReferences: [TimestampReference(text: "Quote 1", startMs: 1000, endMs: 2000, label: "Ref 1")]
+        )
+
+        try store.saveMeetingMinutes(minutes)
+        #expect(try store.count(in: "meeting_minutes") == 1)
+
+        let fetched = try store.fetchMeetingMinutes(sessionId: sessionId)
+        #expect(fetched != nil)
+        #expect(fetched?.sessionId == sessionId)
+        #expect(fetched?.overview.title == "Test Meeting")
+        #expect(fetched?.actionItems.first?.assignee == "Alice")
+
+        try store.deleteMeetingMinutes(sessionId: sessionId)
+        #expect(try store.count(in: "meeting_minutes") == 0)
     }
 }
