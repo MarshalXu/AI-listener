@@ -43,6 +43,9 @@ public final class GeminiClient: GeminiClientProtocol, @unchecked Sendable {
         }
 
         let prompt = buildPrompt(sessionId: sessionId, segments: segments, kind: kind, style: style)
+        // responseMimeType = application/json nudges Gemini to return pure JSON
+        // (no markdown fences / prose wrapping), reducing cleanup fragility.
+        // temperature is pinned low for deterministic, structured output.
         let requestBody: [String: Any] = [
             "contents": [
                 [
@@ -50,6 +53,10 @@ public final class GeminiClient: GeminiClientProtocol, @unchecked Sendable {
                         ["text": prompt]
                     ]
                 ]
+            ],
+            "generationConfig": [
+                "responseMimeType": "application/json",
+                "temperature": 0.2
             ]
         ]
 
@@ -201,14 +208,46 @@ public final class GeminiClient: GeminiClientProtocol, @unchecked Sendable {
 
     private func cleanJsonString(_ text: String) -> String {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("```json") {
-            trimmed.removeFirst(7)
-        } else if trimmed.hasPrefix("```") {
-            trimmed.removeFirst(3)
+
+        // Strip a fenced code block that may appear anywhere in the candidate
+        // text. Only strip when a matching closing fence exists so we never
+        // damage content that merely contains stray backticks.
+        if trimmed.contains("```") {
+            let fenceStart = trimmed.range(of: "```")
+            let innerStart: String.Index
+            if let start = fenceStart {
+                let afterFence = start.upperBound
+                // Skip an optional language tag (e.g. "json") up to a newline.
+                if afterFence < trimmed.endIndex, trimmed[afterFence..<trimmed.endIndex].hasPrefix("json") {
+                    let afterLang = trimmed.index(afterFence, offsetBy: 4)
+                    if afterLang < trimmed.endIndex, trimmed[afterLang].isNewline {
+                        innerStart = trimmed.index(after: afterLang)
+                    } else {
+                        innerStart = afterFence
+                    }
+                } else {
+                    innerStart = afterFence
+                }
+            } else {
+                innerStart = trimmed.startIndex
+            }
+
+            if let close = trimmed.range(of: "```", range: innerStart..<trimmed.endIndex) {
+                trimmed = String(trimmed[innerStart..<close.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
-        if trimmed.hasSuffix("```") {
-            trimmed.removeLast(3)
+
+        // Fallback: if the model wrapped the JSON in prose (no fences),
+        // extract the outermost { ... } object so JSONDecoder gets clean JSON.
+        if !trimmed.hasPrefix("{") || !trimmed.hasSuffix("}") {
+            if let firstBrace = trimmed.firstIndex(of: "{"),
+               let lastBrace = trimmed.lastIndex(of: "}"),
+               firstBrace <= lastBrace {
+                trimmed = String(trimmed[firstBrace...lastBrace])
+            }
         }
+
         return trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -97,9 +97,31 @@ final class SessionLibraryViewModel: ObservableObject {
 
     func generateMinutes() {
         guard let detail = detail else { return }
+
+        // Pre-flight: fail fast with an actionable error code before touching
+        // the network. This mirrors MeetingMinutesService's degradation logic
+        // but is surfaced here so the library view can show guidance without
+        // waiting for an actor round-trip.
+        let settings = PrivacySettingsStore.shared.loadSettings()
+        let apiKey = try? KeychainManager.shared.getApiKey()
+        let hasKey = apiKey != nil && !apiKey!.isEmpty
+
+        if settings.aiMode == .off {
+            self.errorCode = "MINUTES_AI_MODE_OFF"
+            return
+        }
+        if settings.aiModel != .localMock {
+            if !settings.cloudConsentGranted {
+                self.errorCode = "MINUTES_CLOUD_CONSENT_MISSING"
+                return
+            }
+            if !hasKey {
+                self.errorCode = "MINUTES_API_KEY_MISSING"
+                return
+            }
+        }
+
         Task {
-            let settings = PrivacySettingsStore.shared.loadSettings()
-            let apiKey = try? KeychainManager.shared.getApiKey()
             let client: GeminiClientProtocol = settings.aiModel == .localMock ? MockGeminiClient() : GeminiClient()
 
             do {
@@ -113,6 +135,18 @@ final class SessionLibraryViewModel: ObservableObject {
                 try store?.saveMeetingMinutes(generated)
                 self.minutes = generated
                 self.errorCode = nil
+            } catch let GeminiClientError.invalidResponse(code, _) {
+                // 4xx → bad key/quota; 5xx → server fault. Both map to codes
+                // the UI can render with tailored guidance.
+                if (400..<500).contains(code) {
+                    self.errorCode = "MINUTES_API_KEY_INVALID_OR_QUOTA"
+                } else {
+                    self.errorCode = "MINUTES_GEMINI_SERVER_ERROR"
+                }
+            } catch GeminiClientError.invalidJsonPayload {
+                self.errorCode = "MINUTES_RESPONSE_PARSE_FAILED"
+            } catch GeminiClientError.networkError {
+                self.errorCode = "MINUTES_NETWORK_ERROR"
             } catch {
                 self.errorCode = "MINUTES_GENERATE_FAILED"
             }
@@ -204,7 +238,12 @@ struct SessionLibraryView: View {
                     Text("目标 \(timestamp(position.requestedMs)) · 实际 \(timestamp(position.actualMs))")
                 }
                 if let code = model.errorCode {
-                    Text("错误码：\(code)").foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("错误码：\(code)").foregroundStyle(.red)
+                        Text(guidance(for: code))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .font(.caption)
@@ -223,5 +262,28 @@ struct SessionLibraryView: View {
 
     private func duration(_ milliseconds: Int64) -> String {
         String(format: "%02lld:%02lld", milliseconds / 60_000, (milliseconds / 1_000) % 60)
+    }
+
+    /// Chinese guidance rendered beneath a minutes error code, pointing the
+    /// user at the specific settings action that unblocks generation.
+    private func guidance(for code: String) -> String {
+        switch code {
+        case "MINUTES_AI_MODE_OFF":
+            return "请在「AI 纪要与隐私设置」中开启 AI 模式后重试。"
+        case "MINUTES_API_KEY_MISSING":
+            return "请前往「AI 纪要与隐私设置」保存 Gemini API Key 后重试。"
+        case "MINUTES_CLOUD_CONSENT_MISSING":
+            return "请前往「AI 纪要与隐私设置」勾选允许逐字稿上传至云端后重试。"
+        case "MINUTES_API_KEY_INVALID_OR_QUOTA":
+            return "Gemini 返回 4xx，请检查 API Key 是否有效、是否触发配额限制。"
+        case "MINUTES_GEMINI_SERVER_ERROR":
+            return "Gemini 服务端异常（5xx），请稍后重试。"
+        case "MINUTES_NETWORK_ERROR":
+            return "网络异常，请检查连接后重试。"
+        case "MINUTES_RESPONSE_PARSE_FAILED":
+            return "Gemini 返回内容解析失败，可重试或检查模型输出规范。"
+        default:
+            return "纪要生成失败，请检查设置后重试。"
+        }
     }
 }
