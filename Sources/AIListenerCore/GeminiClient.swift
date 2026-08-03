@@ -272,48 +272,67 @@ public final class MockGeminiClient: GeminiClientProtocol, @unchecked Sendable {
             throw failureError
         }
 
-        let maxMs = segments.map(\.endMs).max() ?? 60000
-        let fullText = segments.map(\.text).joined(separator: "；")
+        let maxMs = segments.map(\.endMs).max() ?? 0
+        let nonEmptySegments = segments.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let fullText = nonEmptySegments.map(\.text).joined(separator: "；")
+        let sentences = MockGeminiClient.splitSentences(fullText)
 
+        // Empty transcript: explicit "no speech" placeholder instead of fake sample content.
+        if fullText.isEmpty {
+            let overview = MeetingOverview(
+                title: "未命名会议",
+                durationMs: maxMs,
+                participantSummary: "逐字稿未标注发言人",
+                generalSummary: "无发言记录"
+            )
+            return MeetingMinutes(
+                sessionId: sessionId,
+                kind: kind,
+                style: style,
+                overview: overview,
+                coreSummary: [],
+                topics: [],
+                decisions: [],
+                actionItems: [],
+                unresolvedQuestions: [],
+                timestampReferences: []
+            )
+        }
+
+        // overview — derived from transcript content.
+        let titleSource = nonEmptySegments.first?.text ?? fullText
+        let title = MockGeminiClient.deriveTitle(from: titleSource, style: style)
+        let generalSummary = MockGeminiClient.deriveGeneralSummary(from: sentences)
+        let participantSummary = "逐字稿未标注发言人"
         let overview = MeetingOverview(
-            title: "【Mock】会议纪要 (\(style.displayName))",
+            title: title,
             durationMs: maxMs,
-            participantSummary: "参会人员：主要发言者与听众",
-            generalSummary: fullText.isEmpty ? "本次会议无发言记录。" : "会议讨论摘要：\(fullText.prefix(100))..."
+            participantSummary: participantSummary,
+            generalSummary: generalSummary
         )
 
-        let coreSummary = [
-            "总结要点 1：已确认项目进度与架构方案。",
-            "总结要点 2：明确阶段性交付交付目标。"
-        ]
+        // coreSummary — 2~3 representative sentences from the transcript (non-fixed).
+        let coreSummary = MockGeminiClient.deriveCoreSummary(from: sentences)
 
-        let topics = [
-            MinutesTopic(
-                title: "议题一：架构与功能评审",
-                summary: "对阶段二功能（Keychain、Gemini 纪要）进行讨论与评审。",
-                keyPoints: ["重点关注密钥安全性", "确保网络异常时静默降级"]
-            )
-        ]
+        // topics — group segments by time gaps, each topic titled/summarised from its segments.
+        let topics = MockGeminiClient.deriveTopics(from: nonEmptySegments)
 
-        let decisions = [
-            "确定 API Key 不落盘，仅存储于 Keychain。",
-            "确定使用 SQLite schema v3 迁移存储纪要。"
-        ]
+        // decisions / actionItems / unresolvedQuestions — keyword detection on real sentences.
+        let decisions = MockGeminiClient.detectSentences(
+            from: sentences,
+            keywords: ["决定", "确认", "同意", "通过", "确定", "决议", "达成", "敲定"]
+        )
+        let actionableSentences = MockGeminiClient.detectActionableSentences(
+            from: sentences,
+            segments: nonEmptySegments
+        )
+        let unresolvedQuestions = MockGeminiClient.detectSentences(
+            from: sentences,
+            keywords: ["？", "?", "吗", "呢", "怎么", "如何", "是否", "能不能", "能否", "为什么"]
+        )
 
-        let actionItems = [
-            ActionItem(
-                task: "完成 MockGeminiClient 与单元测试编写",
-                assignee: "Hermes",
-                dueDate: "今日",
-                timestampMs: segments.first?.startMs ?? 0
-            )
-        ]
-
-        let unresolvedQuestions = [
-            "关注本地 LLM 接入的可能性与性能表现"
-        ]
-
-        let timestampReferences = segments.prefix(3).map { seg in
+        // timestampReferences — keep existing segment-based logic (already transcript-derived).
+        let timestampReferences = nonEmptySegments.prefix(3).map { seg in
             TimestampReference(
                 text: seg.text,
                 startMs: seg.startMs,
@@ -330,9 +349,143 @@ public final class MockGeminiClient: GeminiClientProtocol, @unchecked Sendable {
             coreSummary: coreSummary,
             topics: topics,
             decisions: decisions,
-            actionItems: actionItems,
+            actionItems: actionableSentences,
             unresolvedQuestions: unresolvedQuestions,
             timestampReferences: Array(timestampReferences)
         )
+    }
+
+    // MARK: - Local heuristic helpers
+
+    /// Split text into sentences using common CJK/ASCII terminators, dropping empties.
+    private static func splitSentences(_ text: String) -> [String] {
+        let separators: Set<Character> = ["。", "！", "？", "；", ".", "!", "?", "\n"]
+        var current = String()
+        var result: [String] = []
+        for char in text {
+            if separators.contains(char) {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    result.append(trimmed)
+                }
+                current = String()
+            } else {
+                current.append(char)
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty {
+            result.append(tail)
+        }
+        return result
+    }
+
+    /// Title from the first utterance: strip trailing punctuation, truncate to ~20 chars.
+    private static func deriveTitle(from source: String, style: MinutesStyle) -> String {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = String(trimmed.prefix(20))
+        let trailingPunctuation = CharacterSet(charactersIn: "。！？；.!?；,，、：")
+        let cleaned = prefix.trimmingCharacters(in: trailingPunctuation)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = cleaned.isEmpty ? "未命名会议" : cleaned
+        return "\(base)（\(style.displayName)）"
+    }
+
+    /// General summary: concatenate the first few sentences, capped at ~120 chars.
+    private static func deriveGeneralSummary(from sentences: [String]) -> String {
+        guard !sentences.isEmpty else { return "无发言记录" }
+        var summary = ""
+        for sentence in sentences {
+            let candidate = summary.isEmpty ? sentence : summary + "；" + sentence
+            if candidate.count > 120 {
+                summary += "；" + sentence
+                break
+            }
+            summary = candidate
+            if summary.count >= 80 { break }
+        }
+        let capped = String(summary.prefix(120))
+        return capped
+    }
+
+    /// Core summary: pick up to 3 representative sentences (first, middle, last).
+    private static func deriveCoreSummary(from sentences: [String]) -> [String] {
+        guard !sentences.isEmpty else { return [] }
+        if sentences.count <= 3 {
+            return sentences
+        }
+        let first = sentences[0]
+        let middle = sentences[sentences.count / 2]
+        let last = sentences[sentences.count - 1]
+        return [first, middle, last]
+    }
+
+    /// Group segments into topics by time gaps (≥10s) or size (every 4 segments),
+    /// each topic titled/summarised from its own segments.
+    private static func deriveTopics(from segments: [TranscriptSegmentRecord]) -> [MinutesTopic] {
+        guard !segments.isEmpty else { return [] }
+        var groups: [[TranscriptSegmentRecord]] = []
+        var current: [TranscriptSegmentRecord] = []
+        var lastEndMs: Int64 = segments[0].startMs
+
+        for seg in segments {
+            let gap = seg.startMs - lastEndMs
+            if !current.isEmpty && (gap >= 10_000 || current.count >= 4) {
+                groups.append(current)
+                current = []
+            }
+            current.append(seg)
+            lastEndMs = max(lastEndMs, seg.endMs)
+        }
+        if !current.isEmpty {
+            groups.append(current)
+        }
+
+        return groups.enumerated().map { index, group in
+            let groupText = group.map(\.text).joined(separator: "；")
+            let titleSource = group.first?.text ?? groupText
+            let trailing = CharacterSet(charactersIn: "。！？；.!?，,、：")
+            let titleBase = String(titleSource.prefix(24))
+                .trimmingCharacters(in: trailing)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = titleBase.isEmpty ? "议题 \(index + 1)" : "议题 \(index + 1)：\(titleBase)"
+            let summary = String(groupText.prefix(100))
+            let keyPoints = group.prefix(3).map { String($0.text.prefix(40)) }
+            return MinutesTopic(
+                title: title,
+                summary: summary,
+                keyPoints: keyPoints
+            )
+        }
+    }
+
+    /// Return sentences containing any of the given keywords (real transcript content).
+    private static func detectSentences(from sentences: [String], keywords: [String]) -> [String] {
+        let matched = sentences.filter { sentence in
+            keywords.contains { keyword in sentence.contains(keyword) }
+        }
+        return Array(matched.prefix(5))
+    }
+
+    /// Detect actionable sentences and attach the originating segment timestamp.
+    private static func detectActionableSentences(
+        from sentences: [String],
+        segments: [TranscriptSegmentRecord]
+    ) -> [ActionItem] {
+        let keywords = ["需要", "负责", "完成", "跟进", "安排", "待办", "推进", "落实", "下周", "本周", "明天", "今天", "尽快", "之后"]
+        let matched = sentences.filter { sentence in
+            keywords.contains { keyword in sentence.contains(keyword) }
+        }
+        return matched.prefix(5).map { sentence in
+            // Find the segment whose text contains this sentence, for timestamp attribution.
+            let seg = segments.first { seg in seg.text.contains(sentence) }
+                ?? segments.min(by: { abs($0.startMs) < abs($1.startMs) })
+            return ActionItem(
+                task: String(sentence.prefix(60)),
+                assignee: nil,
+                dueDate: nil,
+                timestampMs: seg?.startMs
+            )
+        }
     }
 }

@@ -175,11 +175,46 @@ struct GeminiClientTests {
         #expect(minutes.sessionId == "00000000-0000-0000-0000-000000000001")
         #expect(minutes.kind == .postSession)
         #expect(minutes.style == .standard)
+
+        // Title must be derived from transcript text (not a fixed "【Mock】" placeholder).
         #expect(!minutes.overview.title.isEmpty)
+        #expect(!minutes.overview.title.contains("【Mock】"))
+        #expect(minutes.overview.title.contains("大家早上好"))
+
+        // General summary must relate to transcript content.
+        #expect(!minutes.overview.generalSummary.isEmpty)
+        #expect(minutes.overview.generalSummary.contains("项目") || minutes.overview.generalSummary.contains("API"))
+
+        // Core summary must be non-fixed and transcript-derived.
         #expect(!minutes.coreSummary.isEmpty)
-        #expect(!minutes.decisions.isEmpty)
-        #expect(!minutes.actionItems.isEmpty)
+        #expect(minutes.coreSummary.allSatisfy { !$0.hasPrefix("总结要点") })
+
+        // Topics must be derived from the segments (no fixed "议题一：架构与功能评审").
+        #expect(!minutes.topics.isEmpty)
+        #expect(minutes.topics.allSatisfy { !$0.title.contains("架构与功能评审") })
+
+        // timestampReferences follow segment count (capped at 3).
         #expect(minutes.timestampReferences.count == 2)
+    }
+
+    @Test func mockClientEmptyTranscriptReturnsNoSpeechPlaceholder() async throws {
+        let client = MockGeminiClient()
+
+        let minutes = try await client.generateMinutes(
+            sessionId: "00000000-0000-0000-0000-000000000002",
+            segments: [],
+            kind: .postSession,
+            style: .standard,
+            apiKey: nil
+        )
+
+        #expect(minutes.overview.generalSummary == "无发言记录")
+        #expect(minutes.coreSummary.isEmpty)
+        #expect(minutes.topics.isEmpty)
+        #expect(minutes.decisions.isEmpty)
+        #expect(minutes.actionItems.isEmpty)
+        #expect(minutes.unresolvedQuestions.isEmpty)
+        #expect(minutes.timestampReferences.isEmpty)
     }
 
     @Test func mockClientFailureHandling() async {
