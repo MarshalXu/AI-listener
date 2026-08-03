@@ -104,4 +104,108 @@ struct MeetingMinutesServiceTests {
         let result = await service.finishSession(sessionId: sessionId)
         #expect(result == nil)
     }
+
+    // MARK: Degradation reason surfacing (RD-2 scope)
+
+    /// A fresh KeychainManager with a unique service name guarantees no API
+    /// key is present, so tests don't touch or depend on the real keychain.
+    private func emptyKeychain() -> KeychainManager {
+        KeychainManager(serviceName: "ai.listener.tests.\(UUID().uuidString)")
+    }
+
+    @Test func degradedReasonWhenAiModeOff() async throws {
+        let defaults = UserDefaults(suiteName: "ServiceTest_\(UUID().uuidString)")!
+        let privacyStore = PrivacySettingsStore(userDefaults: defaults)
+        privacyStore.saveSettings(PrivacySettings(aiMode: .off, aiModel: .gemini,
+                                                  cloudConsentGranted: true))
+
+        let service = MeetingMinutesService(
+            client: MockGeminiClient(),
+            privacySettingsStore: privacyStore,
+            keychainManager: emptyKeychain()
+        )
+
+        let sessionId = UUID().uuidString
+        await service.startSession(sessionId: sessionId)
+        // Three segments would normally trigger incremental; with AI off we
+        // expect a degraded status carrying the "AI 已关闭" reason instead.
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 1, startMs: 1000))
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 2, startMs: 5000))
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 3, startMs: 9000))
+
+        let status = await service.status
+        try #require(status.degradationReason != nil, "expected degraded status when AI mode off")
+        #expect(status.degradationReason!.contains("AI 已关闭"))
+    }
+
+    @Test func degradedReasonWhenCloudConsentMissing() async throws {
+        let defaults = UserDefaults(suiteName: "ServiceTest_\(UUID().uuidString)")!
+        let privacyStore = PrivacySettingsStore(userDefaults: defaults)
+        privacyStore.saveSettings(PrivacySettings(aiMode: .incrementalAndPost,
+                                                  aiModel: .gemini,
+                                                  cloudConsentGranted: false))
+
+        let service = MeetingMinutesService(
+            client: MockGeminiClient(),
+            privacySettingsStore: privacyStore,
+            keychainManager: emptyKeychain()
+        )
+
+        let sessionId = UUID().uuidString
+        await service.startSession(sessionId: sessionId)
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 1, startMs: 1000))
+
+        let status = await service.status
+        try #require(status.degradationReason != nil)
+        #expect(status.degradationReason!.contains("未授权云端处理"))
+    }
+
+    @Test func degradedReasonWhenApiKeyMissing() async throws {
+        let defaults = UserDefaults(suiteName: "ServiceTest_\(UUID().uuidString)")!
+        let privacyStore = PrivacySettingsStore(userDefaults: defaults)
+        // Cloud consent granted, but no key is present (emptyKeychain).
+        privacyStore.saveSettings(PrivacySettings(aiMode: .incrementalAndPost,
+                                                  aiModel: .gemini,
+                                                  cloudConsentGranted: true))
+
+        let service = MeetingMinutesService(
+            client: MockGeminiClient(),
+            privacySettingsStore: privacyStore,
+            keychainManager: emptyKeychain()
+        )
+
+        let sessionId = UUID().uuidString
+        await service.startSession(sessionId: sessionId)
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 1, startMs: 1000))
+
+        let status = await service.status
+        try #require(status.degradationReason != nil)
+        #expect(status.degradationReason!.contains("API Key"))
+    }
+
+    @Test func finishSessionReturnsNilWithDegradedReasonWhenUnconfigured() async throws {
+        let defaults = UserDefaults(suiteName: "ServiceTest_\(UUID().uuidString)")!
+        let privacyStore = PrivacySettingsStore(userDefaults: defaults)
+        privacyStore.saveSettings(PrivacySettings(aiMode: .off, aiModel: .gemini,
+                                                  cloudConsentGranted: true))
+
+        let service = MeetingMinutesService(
+            client: MockGeminiClient(),
+            privacySettingsStore: privacyStore,
+            keychainManager: emptyKeychain()
+        )
+
+        let sessionId = UUID().uuidString
+        await service.startSession(sessionId: sessionId)
+        await service.handleFinalizedSegment(sampleSegment(sessionId: sessionId, seq: 1, startMs: 1000))
+
+        let result = await service.finishSession(sessionId: sessionId)
+        #expect(result == nil)
+
+        let status = await service.status
+        try #require(status.degradationReason != nil)
+        // finishSession must keep degraded (not reset to .idle) so the UI can
+        // surface the reason.
+        #expect(status.degradationReason!.contains("AI 已关闭"))
+    }
 }

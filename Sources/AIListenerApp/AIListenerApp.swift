@@ -35,6 +35,7 @@ final class CaptureViewModel: ObservableObject {
     @Published private(set) var finalized: [ASRTranscriptEvent] = []
     @Published private(set) var pipelineErrorCode: String?
     @Published private(set) var activeMinutes: MeetingMinutes?
+    @Published private(set) var minutesDegradationReason: String?
 
     public let eventBus = TranscriptEventBus()
     public let subtitleController: SubtitleWindowController
@@ -74,6 +75,7 @@ final class CaptureViewModel: ObservableObject {
             partials = []
             finalized = []
             activeMinutes = nil
+            minutesDegradationReason = nil
             pipelineErrorCode = nil
             whiteboardService.clear()
 
@@ -109,6 +111,10 @@ final class CaptureViewModel: ObservableObject {
                             await MainActor.run {
                                 self?.activeMinutes = updated
                             }
+                        }
+                        let reason = await self?.minutesService.status.degradationReason
+                        await MainActor.run {
+                            self?.minutesDegradationReason = reason
                         }
                     }
                 },
@@ -156,6 +162,10 @@ final class CaptureViewModel: ObservableObject {
                     await MainActor.run {
                         self.activeMinutes = finalMinutes
                     }
+                    let reason = await minutesService.status.degradationReason
+                    await MainActor.run {
+                        self.minutesDegradationReason = reason
+                    }
                     // Flush any batched finalized text before snapshotting so the
                     // last utterances are not lost (AC2.1). flushBatcher() hands
                     // the pending items to handleFinalizedText on a detached Task,
@@ -193,6 +203,7 @@ final class CaptureViewModel: ObservableObject {
         partials = []
         finalized = []
         activeMinutes = nil
+        minutesDegradationReason = nil
         eventBus.publishReset(sessionId: "current")
     }
 
@@ -245,8 +256,8 @@ struct ContentView: View {
                 Button("打开麦克风隐私设置", action: model.openMicrophoneSettings)
             }
 
-            if let minutes = model.activeMinutes {
-                GroupBox(label: Label("实时增量纪要", systemImage: "sparkles")) {
+            GroupBox(label: Label("实时增量纪要", systemImage: "sparkles")) {
+                if let minutes = model.activeMinutes {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(minutes.overview.generalSummary)
                             .font(.subheadline)
@@ -258,6 +269,32 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(4)
+                } else if let reason = model.minutesDegradationReason {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(reason)
+                            .font(.subheadline)
+                            .foregroundStyle(.orange)
+                        Text("录音与识别不受影响，纪要将在条件满足后恢复生成。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button(action: { showingAISettings = true }) {
+                            Label("前往设置", systemImage: "gearshape")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(4)
+                } else if model.isRecording {
+                    Text("等待足够逐字稿后自动生成增量纪要…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(4)
+                } else {
+                    Text("开始录音后将自动生成实时增量纪要。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(4)
                 }
             }
 

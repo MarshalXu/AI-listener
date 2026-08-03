@@ -4,6 +4,40 @@ public enum ServiceStatus: Equatable, Sendable {
     case idle
     case active
     case degraded(reason: String)
+
+    /// Convenience accessor for the degradation reason, if any. UI layers read
+    /// this to surface actionable guidance to the user (e.g. "no API key set").
+    public var degradationReason: String? {
+        if case .degraded(let reason) = self { return reason }
+        return nil
+    }
+}
+
+/// Produces a human-readable, actionable reason explaining why AI minutes
+/// cannot be processed for the given settings/key state. Returns nil when
+/// processing *can* proceed.
+private func degradationReasonIfUnconfigured(
+    settings: PrivacySettings,
+    hasApiKey: Bool
+) -> String? {
+    guard settings.canProcess(hasApiKey: hasApiKey) else {
+        if settings.aiMode == .off {
+            return "AI 已关闭：请在设置中开启 AI 模式以生成纪要。"
+        }
+        if settings.aiModel == .localMock {
+            // localMock does not require consent or key, so reaching here is
+            // unexpected; treat as a configuration error.
+            return "AI 模式已关闭，无法生成纪要。"
+        }
+        if !settings.cloudConsentGranted {
+            return "未授权云端处理：请在「AI 纪要与隐私设置」中勾选允许逐字稿上传至云端。"
+        }
+        if !hasApiKey {
+            return "未设置 Gemini API Key：请在「AI 纪要与隐私设置」中保存 Key 后重试。"
+        }
+        return "AI 纪要生成条件未满足，请检查设置。"
+    }
+    return nil
 }
 
 public actor MeetingMinutesService {
@@ -50,7 +84,12 @@ public actor MeetingMinutesService {
         let apiKey = try? keychainManager.getApiKey()
         let hasKey = apiKey != nil && !apiKey!.isEmpty
 
-        guard settings.canProcess(hasApiKey: hasKey) else { return }
+        // Surface actionable degradation rather than silently dropping the
+        // segment; the UI binds to `status` to show guidance.
+        if let reason = degradationReasonIfUnconfigured(settings: settings, hasApiKey: hasKey) {
+            self.status = .degraded(reason: reason)
+            return
+        }
         guard settings.aiMode == .incrementalAndPost else { return }
 
         // Trigger incremental update every 3 new finalized segments
@@ -98,8 +137,10 @@ public actor MeetingMinutesService {
         let apiKey = try? keychainManager.getApiKey()
         let hasKey = apiKey != nil && !apiKey!.isEmpty
 
-        guard settings.canProcess(hasApiKey: hasKey) else {
-            self.status = .idle
+        // Surface actionable degradation rather than silently returning nil;
+        // the UI binds to `status` to show guidance and a CTA to settings.
+        if let reason = degradationReasonIfUnconfigured(settings: settings, hasApiKey: hasKey) {
+            self.status = .degraded(reason: reason)
             return nil
         }
 
