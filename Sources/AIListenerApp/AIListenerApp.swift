@@ -347,7 +347,9 @@ struct ContentView: View {
 
     private var detail: String {
         if let code = model.status.errorCode { return "错误码：\(code)" }
-        if let reason = model.status.terminationReason { return "终止原因：\(reason.rawValue)" }
+        if let reason = model.status.terminationReason {
+            return "终止原因：\(reason.localizedDescription)"
+        }
         return "录音只会在你点击“开始录音”后启动。"
     }
 
