@@ -62,7 +62,13 @@ public final class AVFoundationMicrophoneCapture: MicrophoneCapturing, @unchecke
                     forName: .AVAudioEngineConfigurationChange,
                     object: engine,
                     queue: nil
-                ) { _ in
+                ) { [self] _ in
+                    // AVAudioEngine may fire a configuration-change notification
+                    // during/ immediately after `engine.start()` before the
+                    // recording is truly underway. Only surface it as an
+                    // interruption when we are actually running, so the capture
+                    // is not spuriously terminated on launch.
+                    guard self.isRunning else { return }
                     onInterruption(.deviceConfigurationChanged)
                 }
 
