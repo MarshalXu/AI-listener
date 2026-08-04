@@ -87,6 +87,7 @@ final class CaptureViewModel: ObservableObject {
 
             let pipeline = try RecordingSessionPipeline(
                 store: store, assetRoot: assets, engine: engine,
+                sessionId: sessionId,
                 eventBus: eventBus,
                 partialSink: { [weak self] in self?.partials = $0 },
                 finalizedSink: { [weak self] event in

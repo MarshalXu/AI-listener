@@ -257,6 +257,67 @@ struct EndToEndIntegrationAndFaultIsolationTests {
         #expect(playable.count == 1)
         #expect(playable.first?.sessionId == pipeline.sessionId)
     }
+
+    // MARK: - Regression: sessionId consistency prevents FK failure on stop
+    // XUC-9 — `CaptureViewModel.start()` previously generated a sessionId,
+    // stored it in `currentSessionId`, but did NOT pass it to
+    // `RecordingSessionPipeline.init`, which then used its default
+    // `UUID().uuidString` for the `sessions` row. At stop time
+    // `saveWhiteboardSnapshot` was called with the original sessionId,
+    // violating the `whiteboard_snapshots.session_id → sessions.id` FK
+    // and raising sqlite code 19. This test pins the contract the fix
+    // relies on: an explicitly-passed sessionId is the one the pipeline
+    // exposes and persists, and a snapshot saved with that same id does
+    // not throw after the session row exists.
+    @Test func testPipelineSessionIdIsConsistentAndSnapshotSaveDoesNotViolateForeignKey() throws {
+        let dbURL = try databaseURL()
+        let assetRoot = try assetRootURL()
+        let store = try SessionStore(databaseURL: dbURL)
+        let mockEngine = MockASREngine()
+
+        // Caller generates a sessionId (mirrors CaptureViewModel.start()).
+        let callerSessionId = UUID().uuidString
+
+        // The fix: pass sessionId explicitly. Without it, the pipeline would
+        // generate a *different* id internally (the default argument).
+        let pipeline = try RecordingSessionPipeline(
+            store: store,
+            assetRoot: assetRoot,
+            engine: mockEngine,
+            sessionId: callerSessionId
+        )
+
+        // The pipeline must expose the caller's id, not a fresh one.
+        #expect(pipeline.sessionId == callerSessionId)
+
+        // Feed one audio frame so finish() has audio to commit; this also
+        // inserts the sessions row via AtomicAudioAssetWriter.begin.
+        let frameFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
+        let pcmBuffer = AVAudioPCMBuffer(pcmFormat: frameFormat, frameCapacity: 1600)!
+        pcmBuffer.frameLength = 1600
+        let frame = AudioFrame(buffer: pcmBuffer, monotonicNanoseconds: 100_000_000)
+        try pipeline.consume(frame)
+        _ = try pipeline.finish()
+
+        // The sessions row must exist with the caller's id; otherwise the
+        // FK on whiteboard_snapshots would fail (the original bug).
+        #expect(try store.sessionState(sessionId: callerSessionId) != nil)
+
+        // Saving a snapshot with the same sessionId must not throw an FK
+        // error. Before the fix this raised sqlite code 19.
+        let snapshot = WhiteboardSnapshot(
+            snapshotId: "snap_\(callerSessionId)",
+            sessionId: callerSessionId,
+            elementsJSON: "[{\"id\":\"node_1\",\"type\":\"rectangle\"}]",
+            appStateJSON: "{\"viewBackgroundColor\":\"#ffffff\"}"
+        )
+        #expect(throws: Never.self) {
+            try store.saveWhiteboardSnapshot(snapshot)
+        }
+
+        let fetched = try store.fetchWhiteboardSnapshot(sessionId: callerSessionId)
+        #expect(fetched?.sessionId == callerSessionId)
+    }
 }
 
 // MARK: - Helpers
