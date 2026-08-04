@@ -266,4 +266,27 @@ struct SessionStoreTests {
         try store.deleteMeetingMinutes(sessionId: sessionId)
         #expect(try store.count(in: "meeting_minutes") == 0)
     }
+
+    // MARK: - XUC-9: LocalizedError surfaces real sqlite code/message
+
+    /// `SessionStoreError` must conform to `LocalizedError` so that
+    /// `localizedDescription` exposes the real sqlite code+message instead of
+    /// the misleading "error 0." (case ordinal) the bug report showed. Before
+    /// the fix, a FOREIGN KEY failure (sqlite code 19) was masked as
+    /// `error 0.` because Swift's default `localizedDescription` for a raw
+    /// Error enum uses the case index.
+    @Test func sessionStoreErrorLocalizedDescriptionExposesRealCode() {
+        let err = SessionStoreError.sqlite(code: 19, message: "FOREIGN KEY constraint failed")
+        // localizedDescription routes through errorDescription when present.
+        #expect(err.localizedDescription.contains("19"))
+        #expect(err.localizedDescription.contains("FOREIGN KEY constraint failed"))
+
+        // Non-sqlite cases must also produce a human-readable description,
+        // not the opaque "error N." ordinal form.
+        let migration = SessionStoreError.migrationFailed(version: 2)
+        #expect(migration.localizedDescription.contains("2"))
+
+        let contract = SessionStoreError.invalidContract("sessionId")
+        #expect(contract.localizedDescription.contains("sessionId"))
+    }
 }

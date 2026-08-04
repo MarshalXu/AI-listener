@@ -7,6 +7,21 @@ public enum SessionStoreError: Error, Equatable {
     case invalidContract(String)
 }
 
+extension SessionStoreError: LocalizedError {
+    /// Surface the real sqlite code+message instead of the case ordinal
+    /// (which masked real failures with a misleading "error 0.").
+    public var errorDescription: String? {
+        switch self {
+        case .sqlite(let code, let message):
+            return "sqlite(code: \(code), message: \"\(message)\")"
+        case .migrationFailed(let version):
+            return "migration failed at version \(version)"
+        case .invalidContract(let field):
+            return "invalid contract: \(field)"
+        }
+    }
+}
+
 public struct SessionRecord: Sendable, Equatable {
     public static let contractVersion = "ai-listener.contracts/1.0"
     public let sessionId: String
