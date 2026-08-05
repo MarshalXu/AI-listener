@@ -18,6 +18,26 @@ final class SessionLibraryViewModel: ObservableObject {
         }
     }
 
+    // XUC-12: sidebar search + navigation filter state. These drive the
+    // client-side filtering of `sessions` via `SessionListFilter.apply` (pure
+    // function in AIListenerCore, unit-tested there). Favorites are a local
+    // UserDefaults set — the store schema is unchanged.
+    @Published var searchText: String = ""
+    @Published var selectedFilter: SidebarFilter = .all
+    @Published var showingAISettings: Bool = false
+    let favorites = SessionFavoritesStore()
+
+    /// Client-side filtered view of `sessions` honoring the sidebar search
+    /// text and the selected navigation filter.
+    var filteredSessions: [SessionListItem] {
+        SessionListFilter.apply(
+            to: sessions,
+            filter: selectedFilter,
+            searchText: searchText,
+            favoriteIds: favorites.favoriteIds
+        )
+    }
+
     private var store: SessionStore?
     private var playback: PlaybackService?
     private let minutesService = MeetingMinutesService()
@@ -159,16 +179,26 @@ struct SessionLibraryView: View {
 
     var body: some View {
         NavigationSplitView {
-            // Sidebar is intentionally left for sibling work (XUC-11/12).
-            // The session list lives in the content column below; the sidebar
-            // here is kept minimal so this view stays usable on its own.
-            ContentUnavailableView("记录", systemImage: "waveform")
-                .navigationTitle("记录")
+            // XUC-12: left column is the dedicated sidebar (search box +
+            // navigation items + bottom user/settings entry). Settings sheet
+            // is triggered from here; its logic is unchanged.
+            SidebarView(
+                searchText: $model.searchText,
+                selectedFilter: $model.selectedFilter,
+                showingAISettings: $model.showingAISettings
+            )
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("刷新", systemImage: "arrow.clockwise", action: model.reload)
+                }
+            }
         } content: {
-            // Content column: the grouped, card-styled session list.
-            // `listPlayableSessions()` is already newest-first, so the groups
-            // produced by `groupSessionsByDay` read top-to-bottom today→earlier.
-            let groups = SessionListGrouping.groupSessionsByDay(model.sessions)
+            // Content column (XUC-13): the grouped, card-styled session list.
+            // `filteredSessions` honors the sidebar search/filter (XUC-12);
+            // `groupSessionsByDay` then segments that newest-first list into
+            // 今天/昨天/更早 sections. Empty buckets are dropped so only
+            // non-empty groups render.
+            let groups = SessionListGrouping.groupSessionsByDay(model.filteredSessions)
             List(selection: $model.selection) {
                 ForEach(groups) { group in
                     Section(group.label) {
@@ -180,14 +210,11 @@ struct SessionLibraryView: View {
                 }
             }
             .overlay {
-                if model.sessions.isEmpty {
-                    ContentUnavailableView("暂无可回听记录", systemImage: "waveform")
+                if model.filteredSessions.isEmpty {
+                    emptyStateView
                 }
             }
-            .navigationTitle("会话列表")
-            .toolbar {
-                Button("刷新", systemImage: "arrow.clockwise", action: model.reload)
-            }
+            .navigationTitle(navigationTitle)
         } detail: {
             if let detail = model.detail {
                 VStack(spacing: 0) {
@@ -261,6 +288,42 @@ struct SessionLibraryView: View {
         .onReceive(NotificationCenter.default.publisher(for: .aiListenerSessionDidFinalize)) { _ in
             model.reload()
         }
+        // XUC-12: settings sheet now triggered from the sidebar's bottom
+        // settings button (via model.showingAISettings). The settings view's
+        // logic is unchanged — only its trigger source migrated.
+        .sheet(isPresented: $model.showingAISettings) {
+            AISettingsView()
+        }
+    }
+
+    /// Empty-state shown in the middle column when the filtered list is empty.
+    /// Varies by the selected sidebar filter so the user gets a meaningful
+    /// message (e.g. "no favorites yet" vs. the trash placeholder).
+    private var emptyStateView: some View {
+        switch model.selectedFilter {
+        case .favorites:
+            ContentUnavailableView("暂无收藏", systemImage: "star",
+                                   description: Text("在会话列表中点击星标即可收藏。"))
+        case .trash:
+            // Trash is a placeholder: hard-delete store has no trash state,
+            // so this is always empty by design until a soft-delete model
+            // lands in a later slice.
+            ContentUnavailableView("回收站为空", systemImage: "trash",
+                                   description: Text("删除的会话不进入回收站。"))
+        case .recent, .all:
+            if model.searchText.isEmpty {
+                ContentUnavailableView("暂无可回听记录", systemImage: "waveform")
+            } else {
+                ContentUnavailableView("无匹配会话", systemImage: "magnifyingglass",
+                                      description: Text("尝试更换关键词或清除筛选。"))
+            }
+        }
+    }
+
+    /// Middle-column title mirrors the selected sidebar filter so the user
+    /// always sees which list they are viewing.
+    private var navigationTitle: String {
+        model.selectedFilter.label
     }
 
     private func timestamp(_ milliseconds: Int64) -> String {
@@ -284,6 +347,13 @@ struct SessionLibraryView: View {
                 Text(SessionListGrouping.timeOfDay(from: session.createdAtUtc))
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
+                // XUC-12: favorite indicator (star) kept on the card row so
+                // favoriting is still visible after the list migration.
+                if model.favorites.isFavorite(session.sessionId) {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(.yellow)
+                        .font(.caption)
+                }
             }
             HStack(spacing: 8) {
                 Image(systemName: "clock")
