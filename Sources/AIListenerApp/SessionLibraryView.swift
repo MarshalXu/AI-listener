@@ -188,186 +188,81 @@ final class SessionLibraryViewModel: ObservableObject {
     }
 }
 
-/// Extracted detail area: title bar + audio player bar + Tab (转录/总结/画板) + content.
-struct SessionDetailView: View {
-    let detail: SessionDetail
-    let minutes: MeetingMinutes?
-    @Binding var selectedTab: Int
-    @ObservedObject var audioPlayerModel: AudioPlayerModel
-    let whiteboardService: WhiteboardService
-    let onPlaySegment: (TranscriptSegmentRecord) -> Void
-    let onPlayAtMs: (Int64) -> Void
-    let onGenerateMinutes: () -> Void
+// MARK: - Shared formatters
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // Title bar
-            HStack {
-                Text(Date(timeIntervalSince1970: Double(detail.session.createdAtUtc) / 1_000),
-                     style: .date)
-                    .font(.headline)
-                Spacer()
-                Text(durationLabel(detail.asset.durationMs))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color(NSColor.windowBackgroundColor))
+/// Shared timestamp formatter used by the detail and status-bar views.
+private func sessionTimestamp(_ milliseconds: Int64) -> String {
+    String(format: "%02lld:%02lld.%03lld",
+            milliseconds / 60_000, (milliseconds / 1_000) % 60, milliseconds % 1_000)
+}
 
-            // Audio player bar
-            AudioPlayerBar(model: audioPlayerModel)
-
-            Divider()
-
-            // Tab selector
-            Picker("", selection: $selectedTab) {
-                Text("转录").tag(0)
-                Text("总结").tag(1)
-                Text("画板").tag(2)
-            }
-            .pickerStyle(.segmented)
-            .padding()
-
-            // Tab content
-            if selectedTab == 0 {
-                List(detail.segments, id: \.segmentId) { segment in
-                    Button {
-                        onPlaySegment(segment)
-                    } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            Text(timestamp(segment.startMs))
-                                .font(.body.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            Text(segment.text)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            Image(systemName: "play.fill")
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            } else if selectedTab == 1 {
-                if let minutes {
-                    MeetingMinutesView(minutes: minutes) { atMs in
-                        onPlayAtMs(atMs)
-                    }
-                } else {
-                    VStack(spacing: 16) {
-                        ContentUnavailableView("尚无总结", systemImage: "doc.text")
-                        Button("生成总结") {
-                            onGenerateMinutes()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .padding()
-                }
-            } else {
-                WhiteboardView(whiteboardService: whiteboardService)
-            }
-        }
-    }
-
-    private func timestamp(_ milliseconds: Int64) -> String {
-        String(format: "%02lld:%02lld.%03lld",
-               milliseconds / 60_000, (milliseconds / 1_000) % 60, milliseconds % 1_000)
-    }
-
-    private func durationLabel(_ milliseconds: Int64) -> String {
-        String(format: "%02lld:%02lld", milliseconds / 60_000, (milliseconds / 1_000) % 60)
+/// Chinese guidance rendered beneath a minutes error code, pointing the
+/// user at the specific settings action that unblocks generation.
+func sessionMinutesGuidance(for code: String) -> String {
+    switch code {
+    case "MINUTES_AI_MODE_OFF":
+        return "请在「AI 纪要与隐私设置」中开启 AI 模式后重试。"
+    case "MINUTES_API_KEY_MISSING":
+        return "请前往「AI 纪要与隐私设置」保存 Gemini API Key 后重试。"
+    case "MINUTES_CLOUD_CONSENT_MISSING":
+        return "请前往「AI 纪要与隐私设置」勾选允许逐字稿上传至云端后重试。"
+    case "MINUTES_API_KEY_INVALID_OR_QUOTA":
+        return "Gemini 返回 4xx，请检查 API Key 是否有效、是否触发配额限制。"
+    case "MINUTES_GEMINI_SERVER_ERROR":
+        return "Gemini 服务端异常（5xx），请稍后重试。"
+    case "MINUTES_NETWORK_ERROR":
+        return "网络异常，请检查连接后重试。"
+    case "MINUTES_RESPONSE_PARSE_FAILED":
+        return "Gemini 返回内容解析失败，可重试或检查模型输出规范。"
+    default:
+        return "纪要生成失败，请检查设置后重试。"
     }
 }
 
-struct SessionLibraryView: View {
-    @StateObject private var model = SessionLibraryViewModel()
+// MARK: - Reusable columns
+
+/// Reusable session list column (the middle column of the app-level
+/// three-column split, and the content column of the legacy two-column view).
+///
+/// Extracted from `SessionLibraryView` (XUC-11) so the app-level
+/// `MainSplitView` can compose it as its content column. Honors the sidebar
+/// search/filter/favorites state (XUC-12) and renders the date-grouped
+/// card-style rows (XUC-13).
+struct SessionListView: View {
+    @ObservedObject var model: SessionLibraryViewModel
 
     var body: some View {
-        NavigationSplitView {
-            // XUC-12: left column is the dedicated sidebar (search box +
-            // navigation items + bottom user/settings entry). Settings sheet
-            // is triggered from here; its logic is unchanged.
-            SidebarView(
-                searchText: $model.searchText,
-                selectedFilter: $model.selectedFilter,
-                showingAISettings: $model.showingAISettings
-            )
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("刷新", systemImage: "arrow.clockwise", action: model.reload)
-                }
-            }
-        } content: {
-            // Content column (XUC-13): the grouped, card-styled session list.
-            // `filteredSessions` honors the sidebar search/filter (XUC-12);
-            // `groupSessionsByDay` then segments that newest-first list into
-            // 今天/昨天/更早 sections. Empty buckets are dropped so only
-            // non-empty groups render.
-            let groups = SessionListGrouping.groupSessionsByDay(model.filteredSessions)
-            List(selection: $model.selection) {
-                ForEach(groups) { group in
-                    Section(group.label) {
-                        ForEach(group.items) { session in
-                            sessionCard(session)
-                                .tag(session.sessionId)
-                        }
+        // Content column (XUC-13): the grouped, card-styled session list.
+        // `filteredSessions` honors the sidebar search/filter (XUC-12);
+        // `groupSessionsByDay` then segments that newest-first list into
+        // 今天/昨天/更早 sections. Empty buckets are dropped so only
+        // non-empty groups render.
+        let groups = SessionListGrouping.groupSessionsByDay(model.filteredSessions)
+        List(selection: $model.selection) {
+            ForEach(groups) { group in
+                Section(group.label) {
+                    ForEach(group.items) { session in
+                        sessionCard(session)
+                            .tag(session.sessionId)
                     }
                 }
             }
-            .overlay {
-                if model.filteredSessions.isEmpty {
-                    emptyStateView
-                }
-            }
-            .navigationTitle(navigationTitle)
-        } detail: {
-            if let detail = model.detail {
-                SessionDetailView(
-                    detail: detail,
-                    minutes: model.minutes,
-                    selectedTab: $model.selectedTab,
-                    audioPlayerModel: model.audioPlayerModel,
-                    whiteboardService: model.whiteboardService,
-                    onPlaySegment: { model.play($0) },
-                    onPlayAtMs: { model.play(atMs: $0) },
-                    onGenerateMinutes: { model.generateMinutes() }
-                )
-                .navigationTitle("会话详情")
-            } else {
-                ContentUnavailableView("选择一条记录", systemImage: "text.bubble")
+        }
+        .overlay {
+            if model.filteredSessions.isEmpty {
+                emptyStateView
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 4) {
-                if let position = model.playbackPosition {
-                    Text("目标 \(timestamp(position.requestedMs)) · 实际 \(timestamp(position.actualMs))")
-                }
-                if let code = model.errorCode {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("错误码：\(code)").foregroundStyle(.red)
-                        Text(guidance(for: code))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .font(.caption)
-            .padding(8)
-        }
-        .onAppear(perform: model.reload)
-        .onReceive(NotificationCenter.default.publisher(for: .aiListenerSessionDidFinalize)) { _ in
-            model.reload()
-        }
-        // XUC-12: settings sheet now triggered from the sidebar's bottom
-        // settings button (via model.showingAISettings). The settings view's
-        // logic is unchanged — only its trigger source migrated.
-        .sheet(isPresented: $model.showingAISettings) {
-            AISettingsView()
+        .navigationTitle(navigationTitle)
+        .toolbar {
+            Button("刷新", systemImage: "arrow.clockwise", action: model.reload)
         }
     }
 
     /// Empty-state shown in the middle column when the filtered list is empty.
     /// Varies by the selected sidebar filter so the user gets a meaningful
     /// message (e.g. "no favorites yet" vs. the trash placeholder).
+    @ViewBuilder
     private var emptyStateView: some View {
         switch model.selectedFilter {
         case .favorites:
@@ -393,11 +288,6 @@ struct SessionLibraryView: View {
     /// always sees which list they are viewing.
     private var navigationTitle: String {
         model.selectedFilter.label
-    }
-
-    private func timestamp(_ milliseconds: Int64) -> String {
-        String(format: "%02lld:%02lld.%03lld",
-               milliseconds / 60_000, (milliseconds / 1_000) % 60, milliseconds % 1_000)
     }
 
     /// Card-style row for a single session in the grouped list. Shows the
@@ -442,27 +332,148 @@ struct SessionLibraryView: View {
         )
         .contentShape(Rectangle())
     }
+}
 
-    /// Chinese guidance rendered beneath a minutes error code, pointing the
-    /// user at the specific settings action that unblocks generation.
-    private func guidance(for code: String) -> String {
-        switch code {
-        case "MINUTES_AI_MODE_OFF":
-            return "请在「AI 纪要与隐私设置」中开启 AI 模式后重试。"
-        case "MINUTES_API_KEY_MISSING":
-            return "请前往「AI 纪要与隐私设置」保存 Gemini API Key 后重试。"
-        case "MINUTES_CLOUD_CONSENT_MISSING":
-            return "请前往「AI 纪要与隐私设置」勾选允许逐字稿上传至云端后重试。"
-        case "MINUTES_API_KEY_INVALID_OR_QUOTA":
-            return "Gemini 返回 4xx，请检查 API Key 是否有效、是否触发配额限制。"
-        case "MINUTES_GEMINI_SERVER_ERROR":
-            return "Gemini 服务端异常（5xx），请稍后重试。"
-        case "MINUTES_NETWORK_ERROR":
-            return "网络异常，请检查连接后重试。"
-        case "MINUTES_RESPONSE_PARSE_FAILED":
-            return "Gemini 返回内容解析失败，可重试或检查模型输出规范。"
-        default:
-            return "纪要生成失败，请检查设置后重试。"
+/// Reusable session detail column (the right column of the app-level
+/// three-column split). Hosts the title bar + audio player bar +
+/// transcript / summary / whiteboard tabs and the bottom playback/error
+/// inset (XUC-11 extraction; XUC-14 added the audio player bar).
+struct SessionDetailView: View {
+    @ObservedObject var model: SessionLibraryViewModel
+
+    var body: some View {
+        if let detail = model.detail {
+            VStack(spacing: 0) {
+                // Title bar
+                HStack {
+                    Text(Date(timeIntervalSince1970: Double(detail.session.createdAtUtc) / 1_000),
+                         style: .date)
+                        .font(.headline)
+                    Spacer()
+                    Text(SessionListGrouping.durationLabel(detail.asset.durationMs))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color(NSColor.windowBackgroundColor))
+
+                // Audio player bar (XUC-14)
+                AudioPlayerBar(model: model.audioPlayerModel)
+
+                Divider()
+
+                // Tab selector
+                Picker("", selection: $model.selectedTab) {
+                    Text("转录").tag(0)
+                    Text("总结").tag(1)
+                    Text("画板").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .padding()
+
+                // Tab content
+                if model.selectedTab == 0 {
+                    List(detail.segments, id: \.segmentId) { segment in
+                        Button {
+                            model.play(segment)
+                        } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                Text(sessionTimestamp(segment.startMs))
+                                    .font(.body.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                Text(segment.text)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "play.fill")
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else if model.selectedTab == 1 {
+                    if let minutes = model.minutes {
+                        MeetingMinutesView(minutes: minutes) { atMs in
+                            model.play(atMs: atMs)
+                        }
+                    } else {
+                        VStack(spacing: 16) {
+                            ContentUnavailableView("尚无总结", systemImage: "doc.text")
+                            Button("生成总结") {
+                                model.generateMinutes()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .padding()
+                    }
+                } else {
+                    WhiteboardView(whiteboardService: model.whiteboardService)
+                }
+            }
+            .navigationTitle("会话详情")
+            .safeAreaInset(edge: .bottom) {
+                SessionDetailStatusBar(model: model)
+            }
+        } else {
+            ContentUnavailableView("选择一条记录", systemImage: "text.bubble")
+        }
+    }
+}
+
+/// Bottom playback-position / error-code bar shared by the detail column.
+struct SessionDetailStatusBar: View {
+    @ObservedObject var model: SessionLibraryViewModel
+
+    var body: some View {
+        VStack(spacing: 4) {
+            if let position = model.playbackPosition {
+                Text("目标 \(sessionTimestamp(position.requestedMs)) · 实际 \(sessionTimestamp(position.actualMs))")
+            }
+            if let code = model.errorCode {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("错误码：\(code)").foregroundStyle(.red)
+                    Text(sessionMinutesGuidance(for: code))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .font(.caption)
+        .padding(8)
+    }
+}
+
+// MARK: - Legacy two-column entry
+
+/// Legacy two-column library entry. Delegates to the same reusable
+/// components as the app-level `MainSplitView` (XUC-11) so behavior stays
+/// consistent; the sidebar column uses `SidebarView` (XUC-12).
+struct SessionLibraryView: View {
+    @StateObject private var model = SessionLibraryViewModel()
+
+    var body: some View {
+        NavigationSplitView {
+            // XUC-12: left column is the dedicated sidebar (search box +
+            // navigation items + bottom user/settings entry). Settings sheet
+            // is triggered from here; its logic is unchanged.
+            SidebarView(
+                searchText: $model.searchText,
+                selectedFilter: $model.selectedFilter,
+                showingAISettings: $model.showingAISettings
+            )
+        } content: {
+            SessionListView(model: model)
+        } detail: {
+            SessionDetailView(model: model)
+        }
+        .onAppear(perform: model.reload)
+        .onReceive(NotificationCenter.default.publisher(for: .aiListenerSessionDidFinalize)) { _ in
+            model.reload()
+        }
+        // XUC-12: settings sheet now triggered from the sidebar's bottom
+        // settings button (via model.showingAISettings). The settings view's
+        // logic is unchanged — only its trigger source migrated.
+        .sheet(isPresented: $model.showingAISettings) {
+            AISettingsView()
         }
     }
 }

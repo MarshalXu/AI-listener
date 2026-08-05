@@ -9,20 +9,67 @@ extension Notification.Name {
 @main
 struct AIListenerApp: App {
     @StateObject private var model = CaptureViewModel()
+    @StateObject private var libraryModel = SessionLibraryViewModel()
     @State private var showingAISettings = false
+    @State private var showingRecording = false
 
     var body: some Scene {
         WindowGroup {
-            TabView {
-                ContentView(model: model, showingAISettings: $showingAISettings)
-                    .tabItem { Label("录音", systemImage: "mic") }
-                SessionLibraryView()
-                    .tabItem { Label("记录", systemImage: "list.bullet") }
-            }
-            .frame(minWidth: 720, minHeight: 520)
+            MainSplitView(
+                libraryModel: libraryModel,
+                onNewRecording: { showingRecording = true }
+            )
+            .preferredColorScheme(.dark)
+            .frame(minWidth: 1000, minHeight: 600)
             .sheet(isPresented: $showingAISettings) {
                 AISettingsView()
             }
+            .sheet(isPresented: $showingRecording) {
+                ContentView(model: model, showingAISettings: $showingAISettings)
+                    .frame(minWidth: 720, minHeight: 520)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .aiListenerSessionDidFinalize)) { _ in
+                libraryModel.reload()
+            }
+        }
+    }
+}
+
+/// App-level three-column NavigationSplitView skeleton (XUC-11).
+///
+/// - sidebar: dedicated `SidebarView` (search + navigation + user/settings
+///   entry, XUC-12). The toolbar surfaces a "新建录音" button that triggers
+///   the recording `ContentView` sheet.
+/// - content: the filtered session list (`SessionListView`), backed by
+///   `SessionLibraryViewModel`. XUC-13 will refine this into date-grouped
+///   cards.
+/// - detail: the selected session's detail area (`SessionDetailView`:
+///   title bar + audio player + transcript / summary / whiteboard tabs,
+///   XUC-14).
+struct MainSplitView: View {
+    @ObservedObject var libraryModel: SessionLibraryViewModel
+    let onNewRecording: () -> Void
+
+    var body: some View {
+        NavigationSplitView {
+            SidebarView(
+                searchText: $libraryModel.searchText,
+                selectedFilter: $libraryModel.selectedFilter,
+                showingAISettings: $libraryModel.showingAISettings
+            )
+            .navigationTitle("AI 听记")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: onNewRecording) {
+                        Label("新建录音", systemImage: "mic.circle.fill")
+                    }
+                    .help("新建录音")
+                }
+            }
+        } content: {
+            SessionListView(model: libraryModel)
+        } detail: {
+            SessionDetailView(model: libraryModel)
         }
     }
 }
