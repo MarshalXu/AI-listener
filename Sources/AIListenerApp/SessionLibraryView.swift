@@ -283,7 +283,7 @@ struct SessionLibraryView: View {
 
     var body: some View {
         NavigationSplitView {
-            // XUC-12: left column is now the dedicated sidebar (search box +
+            // XUC-12: left column is the dedicated sidebar (search box +
             // navigation items + bottom user/settings entry). Settings sheet
             // is triggered from here; its logic is unchanged.
             SidebarView(
@@ -297,26 +297,21 @@ struct SessionLibraryView: View {
                 }
             }
         } content: {
-            // Middle column: the (filtered) session list.
-            List(model.filteredSessions, selection: $model.selection) { session in
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(Date(timeIntervalSince1970: Double(session.createdAtUtc) / 1_000),
-                             style: .date)
-                        Text(session.previewText ?? "无 finalized 逐字稿")
-                            .lineLimit(2)
-                            .foregroundStyle(.secondary)
-                        Text(duration(session.durationMs))
-                            .font(.caption.monospacedDigit())
-                    }
-                    Spacer()
-                    if model.favorites.isFavorite(session.sessionId) {
-                        Image(systemName: "star.fill")
-                            .foregroundStyle(.yellow)
-                            .font(.caption)
+            // Content column (XUC-13): the grouped, card-styled session list.
+            // `filteredSessions` honors the sidebar search/filter (XUC-12);
+            // `groupSessionsByDay` then segments that newest-first list into
+            // 今天/昨天/更早 sections. Empty buckets are dropped so only
+            // non-empty groups render.
+            let groups = SessionListGrouping.groupSessionsByDay(model.filteredSessions)
+            List(selection: $model.selection) {
+                ForEach(groups) { group in
+                    Section(group.label) {
+                        ForEach(group.items) { session in
+                            sessionCard(session)
+                                .tag(session.sessionId)
+                        }
                     }
                 }
-                .tag(session.sessionId)
             }
             .overlay {
                 if model.filteredSessions.isEmpty {
@@ -405,8 +400,47 @@ struct SessionLibraryView: View {
                milliseconds / 60_000, (milliseconds / 1_000) % 60, milliseconds % 1_000)
     }
 
-    private func duration(_ milliseconds: Int64) -> String {
-        String(format: "%02lld:%02lld", milliseconds / 60_000, (milliseconds / 1_000) % 60)
+    /// Card-style row for a single session in the grouped list. Shows the
+    /// preview title, creation time, and duration, with a highlighted look
+    /// when selected. Selection binding and `open(sessionId:)` are handled
+    /// by the enclosing `List(selection:)` + `.tag(sessionId)`.
+    @ViewBuilder
+    private func sessionCard(_ session: SessionListItem) -> some View {
+        let isSelected = model.selection == session.sessionId
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(session.previewText ?? "无 finalized 逐字稿")
+                    .font(.body)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Text(SessionListGrouping.timeOfDay(from: session.createdAtUtc))
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                // XUC-12: favorite indicator (star) kept on the card row so
+                // favoriting is still visible after the list migration.
+                if model.favorites.isFavorite(session.sessionId) {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(.yellow)
+                        .font(.caption)
+                }
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "clock")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text(SessionListGrouping.durationLabel(session.durationMs))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
+        .contentShape(Rectangle())
     }
 
     /// Chinese guidance rendered beneath a minutes error code, pointing the
