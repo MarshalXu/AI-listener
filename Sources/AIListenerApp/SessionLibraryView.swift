@@ -18,6 +18,26 @@ final class SessionLibraryViewModel: ObservableObject {
         }
     }
 
+    // XUC-12: sidebar search + navigation filter state. These drive the
+    // client-side filtering of `sessions` via `SessionListFilter.apply` (pure
+    // function in AIListenerCore, unit-tested there). Favorites are a local
+    // UserDefaults set — the store schema is unchanged.
+    @Published var searchText: String = ""
+    @Published var selectedFilter: SidebarFilter = .all
+    @Published var showingAISettings: Bool = false
+    let favorites = SessionFavoritesStore()
+
+    /// Client-side filtered view of `sessions` honoring the sidebar search
+    /// text and the selected navigation filter.
+    var filteredSessions: [SessionListItem] {
+        SessionListFilter.apply(
+            to: sessions,
+            filter: selectedFilter,
+            searchText: searchText,
+            favoriteIds: favorites.favoriteIds
+        )
+    }
+
     private var store: SessionStore?
     private var playback: PlaybackService?
     private let minutesService = MeetingMinutesService()
@@ -159,27 +179,47 @@ struct SessionLibraryView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(model.sessions, selection: $model.selection) { session in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(Date(timeIntervalSince1970: Double(session.createdAtUtc) / 1_000),
-                         style: .date)
-                    Text(session.previewText ?? "无 finalized 逐字稿")
-                        .lineLimit(2)
-                        .foregroundStyle(.secondary)
-                    Text(duration(session.durationMs))
-                        .font(.caption.monospacedDigit())
+            // XUC-12: left column is now the dedicated sidebar (search box +
+            // navigation items + bottom user/settings entry). Settings sheet
+            // is triggered from here; its logic is unchanged.
+            SidebarView(
+                searchText: $model.searchText,
+                selectedFilter: $model.selectedFilter,
+                showingAISettings: $model.showingAISettings
+            )
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("刷新", systemImage: "arrow.clockwise", action: model.reload)
+                }
+            }
+        } content: {
+            // Middle column: the (filtered) session list.
+            List(model.filteredSessions, selection: $model.selection) { session in
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(Date(timeIntervalSince1970: Double(session.createdAtUtc) / 1_000),
+                             style: .date)
+                        Text(session.previewText ?? "无 finalized 逐字稿")
+                            .lineLimit(2)
+                            .foregroundStyle(.secondary)
+                        Text(duration(session.durationMs))
+                            .font(.caption.monospacedDigit())
+                    }
+                    Spacer()
+                    if model.favorites.isFavorite(session.sessionId) {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(.yellow)
+                            .font(.caption)
+                    }
                 }
                 .tag(session.sessionId)
             }
             .overlay {
-                if model.sessions.isEmpty {
-                    ContentUnavailableView("暂无可回听记录", systemImage: "waveform")
+                if model.filteredSessions.isEmpty {
+                    emptyStateView
                 }
             }
-            .navigationTitle("记录")
-            .toolbar {
-                Button("刷新", systemImage: "arrow.clockwise", action: model.reload)
-            }
+            .navigationTitle(navigationTitle)
         } detail: {
             if let detail = model.detail {
                 VStack(spacing: 0) {
@@ -253,6 +293,42 @@ struct SessionLibraryView: View {
         .onReceive(NotificationCenter.default.publisher(for: .aiListenerSessionDidFinalize)) { _ in
             model.reload()
         }
+        // XUC-12: settings sheet now triggered from the sidebar's bottom
+        // settings button (via model.showingAISettings). The settings view's
+        // logic is unchanged — only its trigger source migrated.
+        .sheet(isPresented: $model.showingAISettings) {
+            AISettingsView()
+        }
+    }
+
+    /// Empty-state shown in the middle column when the filtered list is empty.
+    /// Varies by the selected sidebar filter so the user gets a meaningful
+    /// message (e.g. "no favorites yet" vs. the trash placeholder).
+    private var emptyStateView: some View {
+        switch model.selectedFilter {
+        case .favorites:
+            ContentUnavailableView("暂无收藏", systemImage: "star",
+                                   description: Text("在会话列表中点击星标即可收藏。"))
+        case .trash:
+            // Trash is a placeholder: hard-delete store has no trash state,
+            // so this is always empty by design until a soft-delete model
+            // lands in a later slice.
+            ContentUnavailableView("回收站为空", systemImage: "trash",
+                                   description: Text("删除的会话不进入回收站。"))
+        case .recent, .all:
+            if model.searchText.isEmpty {
+                ContentUnavailableView("暂无可回听记录", systemImage: "waveform")
+            } else {
+                ContentUnavailableView("无匹配会话", systemImage: "magnifyingglass",
+                                      description: Text("尝试更换关键词或清除筛选。"))
+            }
+        }
+    }
+
+    /// Middle-column title mirrors the selected sidebar filter so the user
+    /// always sees which list they are viewing.
+    private var navigationTitle: String {
+        model.selectedFilter.label
     }
 
     private func timestamp(_ milliseconds: Int64) -> String {
