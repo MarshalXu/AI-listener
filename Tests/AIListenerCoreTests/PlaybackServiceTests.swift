@@ -10,6 +10,8 @@ struct PlaybackServiceTests {
         var currentTime: TimeInterval = 0 {
             didSet { currentTime += seekOffset }
         }
+        var duration: TimeInterval = 1.0
+        var rate: Float = 1.0
         var isPlaying = false
         let seekOffset: TimeInterval
 
@@ -61,6 +63,100 @@ struct PlaybackServiceTests {
         #expect(service.isPlaying)
         service.pause()
         #expect(!service.isPlaying)
+    }
+
+    @Test func currentTimeMsReportsPlaybackPositionInMilliseconds() throws {
+        let fixture = try makeFixture()
+        let store = try SessionStore(databaseURL: fixture.databaseURL)
+        let fake = FakeDriver(seekOffset: 0)
+        let service = PlaybackService(
+            store: store, assetRoot: fixture.root,
+            driverFactory: { _ in fake }
+        )
+        _ = try service.open(sessionId: fixture.sessionId)
+        #expect(service.currentTimeMs == 0)
+        fake.currentTime = 0.5
+        #expect(service.currentTimeMs == 500)
+        fake.currentTime = 1.2
+        #expect(service.currentTimeMs == 1_200)
+    }
+
+    @Test func durationMsReflectsDriverDurationWhenAvailable() throws {
+        let fixture = try makeFixture()
+        let store = try SessionStore(databaseURL: fixture.databaseURL)
+        let fake = FakeDriver(seekOffset: 0)
+        fake.duration = 2.5 // 2500 ms
+        let service = PlaybackService(
+            store: store, assetRoot: fixture.root,
+            driverFactory: { _ in fake }
+        )
+        _ = try service.open(sessionId: fixture.sessionId)
+        #expect(service.durationMs == 2_500)
+    }
+
+    @Test func durationMsFallsBackToAssetRecordWhenDriverDurationIsZero() throws {
+        let fixture = try makeFixture()
+        let store = try SessionStore(databaseURL: fixture.databaseURL)
+        let fake = FakeDriver(seekOffset: 0)
+        fake.duration = 0 // driver reports no duration
+        let service = PlaybackService(
+            store: store, assetRoot: fixture.root,
+            driverFactory: { _ in fake }
+        )
+        _ = try service.open(sessionId: fixture.sessionId)
+        // Fixture asset has durationMs = 1000
+        #expect(service.durationMs == 1_000)
+    }
+
+    @Test func resumeContinuesPlaybackFromCurrentPosition() throws {
+        let fixture = try makeFixture()
+        let store = try SessionStore(databaseURL: fixture.databaseURL)
+        let fake = FakeDriver(seekOffset: 0)
+        let service = PlaybackService(
+            store: store, assetRoot: fixture.root,
+            driverFactory: { _ in fake }
+        )
+        _ = try service.open(sessionId: fixture.sessionId)
+        // Seek to 500ms, play, then pause
+        _ = try service.play(atMs: 500)
+        service.pause()
+        #expect(!service.isPlaying)
+        #expect(service.currentTimeMs == 500)
+        // Resume should start playing without changing position
+        let position = try service.resume()
+        #expect(service.isPlaying)
+        #expect(position.requestedMs == 500)
+    }
+
+    @Test func resumeThrowsWhenNoDriverIsLoaded() {
+        let store = try! SessionStore(
+            databaseURL: URL(fileURLWithPath: NSTemporaryDirectory())
+                .appending(path: "empty-\(UUID().uuidString).sqlite")
+        )
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appending(path: "root-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let service = PlaybackService(store: store, assetRoot: root)
+        #expect(throws: PlaybackServiceError.playerUnavailable) {
+            _ = try service.resume()
+        }
+    }
+
+    @Test func setRateClampsToValidRangeAndAppliesToDriver() throws {
+        let fixture = try makeFixture()
+        let store = try SessionStore(databaseURL: fixture.databaseURL)
+        let fake = FakeDriver(seekOffset: 0)
+        let service = PlaybackService(
+            store: store, assetRoot: fixture.root,
+            driverFactory: { _ in fake }
+        )
+        _ = try service.open(sessionId: fixture.sessionId)
+        service.setRate(2.0)
+        #expect(fake.rate == 2.0)
+        service.setRate(-1.0) // negative → clamped to 0
+        #expect(fake.rate == 0.0)
+        service.setRate(10.0) // too high → clamped to 4.0
+        #expect(fake.rate == 4.0)
     }
 
     @Test func missingCommittedAssetIsRemovedFromReadyListWithoutDeletingMetadata() throws {
