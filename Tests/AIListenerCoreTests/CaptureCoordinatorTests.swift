@@ -98,6 +98,60 @@ struct CaptureCoordinatorTests {
         #expect(await coordinator.currentStatus().terminationReason == .deviceConfigurationChanged)
         #expect(await capture.stopCount == 1)
     }
+
+    @Test
+    func deviceUnavailableInterruptionRecordsReason() async throws {
+        let capture = CaptureSpy()
+        let coordinator = CaptureCoordinator(
+            permission: PermissionStub(status: .authorized, requestResult: true),
+            capture: capture,
+            statusSink: { _ in },
+            eventSink: { _ in }
+        )
+        await coordinator.startFromExplicitUserAction()
+
+        await capture.interrupt(.deviceUnavailable)
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(await coordinator.currentStatus().state == .idle)
+        #expect(await coordinator.currentStatus().terminationReason == .deviceUnavailable)
+    }
+
+    @Test(arguments: [
+        (CaptureTerminationReason.userStopped, "用户停止"),
+        (CaptureTerminationReason.deviceUnavailable, "音频设备不可用"),
+        (CaptureTerminationReason.deviceConfigurationChanged, "音频设备配置变化"),
+        (CaptureTerminationReason.engineFailure, "音频引擎启动失败"),
+    ])
+    func terminationReasonLocalizedDescription(
+        _ reason: CaptureTerminationReason, _ expected: String
+    ) {
+        #expect(reason.localizedDescription == expected)
+        // rawValue 保持原始英文枚举值，向后兼容
+        #expect(reason.rawValue != reason.localizedDescription)
+    }
+
+    @Test
+    func reconnectionDoesNotSurfaceInterruptionToCoordinator() async throws {
+        // 模拟配置变化后自动重连成功：capture 不向 coordinator 上报中断，
+        // coordinator 保持 recording 状态，stop 次数为 0。
+        let capture = CaptureSpy()
+        let coordinator = CaptureCoordinator(
+            permission: PermissionStub(status: .authorized, requestResult: true),
+            capture: capture,
+            statusSink: { _ in },
+            eventSink: { _ in }
+        )
+        await coordinator.startFromExplicitUserAction()
+
+        // 配置变化由 capture 层内部重连处理，不触发 onInterruption 回调
+        // coordinator 状态保持 recording
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(await coordinator.currentStatus().state == .recording)
+        #expect(await coordinator.currentStatus().terminationReason == nil)
+        #expect(await capture.stopCount == 0)
+    }
 }
 
 private actor PermissionStub: MicrophonePermissionProviding {

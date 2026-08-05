@@ -46,6 +46,16 @@ public enum CaptureTerminationReason: String, Sendable, Equatable {
     case deviceUnavailable
     case deviceConfigurationChanged
     case engineFailure
+
+    /// 人类可读的中文描述，用于 UI 展示，替代裸 rawValue。
+    public var localizedDescription: String {
+        switch self {
+        case .userStopped: "用户停止"
+        case .deviceUnavailable: "音频设备不可用"
+        case .deviceConfigurationChanged: "音频设备配置变化"
+        case .engineFailure: "音频引擎启动失败"
+        }
+    }
 }
 
 public protocol MicrophoneCapturing: Sendable {
