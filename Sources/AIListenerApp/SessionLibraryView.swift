@@ -159,24 +159,32 @@ struct SessionLibraryView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(model.sessions, selection: $model.selection) { session in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(Date(timeIntervalSince1970: Double(session.createdAtUtc) / 1_000),
-                         style: .date)
-                    Text(session.previewText ?? "无 finalized 逐字稿")
-                        .lineLimit(2)
-                        .foregroundStyle(.secondary)
-                    Text(duration(session.durationMs))
-                        .font(.caption.monospacedDigit())
+            // Sidebar is intentionally left for sibling work (XUC-11/12).
+            // The session list lives in the content column below; the sidebar
+            // here is kept minimal so this view stays usable on its own.
+            ContentUnavailableView("记录", systemImage: "waveform")
+                .navigationTitle("记录")
+        } content: {
+            // Content column: the grouped, card-styled session list.
+            // `listPlayableSessions()` is already newest-first, so the groups
+            // produced by `groupSessionsByDay` read top-to-bottom today→earlier.
+            let groups = SessionListGrouping.groupSessionsByDay(model.sessions)
+            List(selection: $model.selection) {
+                ForEach(groups) { group in
+                    Section(group.label) {
+                        ForEach(group.items) { session in
+                            sessionCard(session)
+                                .tag(session.sessionId)
+                        }
+                    }
                 }
-                .tag(session.sessionId)
             }
             .overlay {
                 if model.sessions.isEmpty {
                     ContentUnavailableView("暂无可回听记录", systemImage: "waveform")
                 }
             }
-            .navigationTitle("记录")
+            .navigationTitle("会话列表")
             .toolbar {
                 Button("刷新", systemImage: "arrow.clockwise", action: model.reload)
             }
@@ -260,8 +268,40 @@ struct SessionLibraryView: View {
                milliseconds / 60_000, (milliseconds / 1_000) % 60, milliseconds % 1_000)
     }
 
-    private func duration(_ milliseconds: Int64) -> String {
-        String(format: "%02lld:%02lld", milliseconds / 60_000, (milliseconds / 1_000) % 60)
+    /// Card-style row for a single session in the grouped list. Shows the
+    /// preview title, creation time, and duration, with a highlighted look
+    /// when selected. Selection binding and `open(sessionId:)` are handled
+    /// by the enclosing `List(selection:)` + `.tag(sessionId)`.
+    @ViewBuilder
+    private func sessionCard(_ session: SessionListItem) -> some View {
+        let isSelected = model.selection == session.sessionId
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(session.previewText ?? "无 finalized 逐字稿")
+                    .font(.body)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Text(SessionListGrouping.timeOfDay(from: session.createdAtUtc))
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "clock")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text(SessionListGrouping.durationLabel(session.durationMs))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
+        .contentShape(Rectangle())
     }
 
     /// Chinese guidance rendered beneath a minutes error code, pointing the
