@@ -27,12 +27,18 @@ public struct PlaybackSeekGateResult: Sendable, Equatable {
 
 public protocol AudioPlaybackDriver: AnyObject {
     var currentTime: TimeInterval { get set }
+    var duration: TimeInterval { get }
+    var rate: Float { get set }
     var isPlaying: Bool { get }
     func play() -> Bool
     func pause()
 }
 
-extension AVAudioPlayer: AudioPlaybackDriver {}
+extension AVAudioPlayer: AudioPlaybackDriver {
+    // AVAudioPlayer natively provides `duration` (TimeInterval) and `rate` (Float).
+    // `enableRate` must be set to true at construction for non-1.0 rates to take
+    // effect; see PlaybackService.defaultDriverFactory below.
+}
 
 /// D-07 adapter: opens only committed assets and reports the player's media position.
 public final class PlaybackService {
@@ -46,6 +52,9 @@ public final class PlaybackService {
     private let driverFactory: DriverFactory
     private var driver: AudioPlaybackDriver?
     public private(set) var detail: SessionDetail?
+
+    /// Exposed so the UI layer can construct asset URLs for waveform extraction.
+    public var assetRootURL: URL { assetRoot }
 
     public init(
         store: SessionStore,
@@ -123,6 +132,46 @@ public final class PlaybackService {
 
     public func pause() {
         driver?.pause()
+    }
+
+    /// Current playback position in milliseconds (0 when no asset is loaded).
+    public var currentTimeMs: Int64 {
+        guard let driver else { return 0 }
+        return Int64((driver.currentTime * 1_000).rounded())
+    }
+
+    /// Total duration of the currently loaded asset in milliseconds,
+    /// sourced from the driver when available, else from the asset record.
+    public var durationMs: Int64 {
+        if let driver, driver.duration > 0 {
+            return Int64((driver.duration * 1_000).rounded())
+        }
+        return detail?.asset.durationMs ?? 0
+    }
+
+    /// Resumes playback from the current position without seeking.
+    @discardableResult
+    public func resume() throws -> PlaybackPosition {
+        guard let driver else {
+            throw PlaybackServiceError.playerUnavailable
+        }
+        let requestedMs = currentTimeMs
+        guard driver.play() else { throw PlaybackServiceError.playerUnavailable }
+        return PlaybackPosition(
+            requestedMs: requestedMs,
+            actualMs: Int64((driver.currentTime * 1_000).rounded())
+        )
+    }
+
+    /// Sets the playback rate (1.0 = normal speed). The driver must have rate
+    /// control enabled; for `AVAudioPlayer` this sets `enableRate = true`
+    /// automatically before applying the rate.
+    public func setRate(_ rate: Float) {
+        guard let driver else { return }
+        if let player = driver as? AVAudioPlayer {
+            player.enableRate = true
+        }
+        driver.rate = max(0.0, min(rate, 4.0))
     }
 
     /// Evaluates the approved M-08 thresholds; callers retain the raw 30 measurements.
