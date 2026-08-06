@@ -152,6 +152,24 @@ struct CaptureCoordinatorTests {
         #expect(await coordinator.currentStatus().terminationReason == nil)
         #expect(await capture.stopCount == 0)
     }
+
+    @Test
+    func tapInstallFailedSurfacesErrorCode() async {
+        // XUC-16: 当 installTap 抛 NSException（被 ObjC bridge 转为
+        // CaptureError.tapInstallFailed）时，coordinator 进入 failed
+        // 状态并记录 capture.tap_install_failed 错误码，而非 abort()。
+        let capture = CaptureSpy(startError: .tapInstallFailed)
+        let coordinator = CaptureCoordinator(
+            permission: PermissionStub(status: .authorized, requestResult: true),
+            capture: capture,
+            statusSink: { _ in },
+            eventSink: { _ in }
+        )
+
+        await coordinator.startFromExplicitUserAction()
+        #expect(await coordinator.currentStatus().state == .failed)
+        #expect(await coordinator.currentStatus().errorCode == "capture.tap_install_failed")
+    }
 }
 
 private actor PermissionStub: MicrophonePermissionProviding {

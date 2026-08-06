@@ -115,6 +115,7 @@ public actor CaptureCoordinator {
         case .noInputDevice: "capture.no_input_device"
         case .invalidInputFormat: "capture.invalid_input_format"
         case .engineStartFailed: "capture.engine_start_failed"
+        case .tapInstallFailed: "capture.tap_install_failed"
         }
     }
 }
