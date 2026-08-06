@@ -16,8 +16,13 @@ let package = Package(
             linkerSettings: [.linkedLibrary("dl")]
         ),
         .target(
+            name: "ObjCExceptionBridge",
+            path: "Sources/ObjCExceptionBridge",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "AIListenerCore",
-            dependencies: ["CSQLite", "CSherpaShim"]
+            dependencies: ["CSQLite", "CSherpaShim", "ObjCExceptionBridge"]
         ),
         .executableTarget(
             name: "AIListenerApp",
@@ -29,7 +34,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AIListenerCoreTests",
-            dependencies: ["AIListenerCore"]
+            dependencies: ["AIListenerCore", "ObjCExceptionBridge"]
         ),
     ]
 )

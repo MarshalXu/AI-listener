@@ -70,4 +70,5 @@ public enum CaptureError: Error, Sendable, Equatable {
     case noInputDevice
     case invalidInputFormat
     case engineStartFailed
+    case tapInstallFailed
 }
